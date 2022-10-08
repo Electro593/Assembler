@@ -387,9 +387,9 @@ Platform_CmpFileTime(datetime A,
     return EQUAL;
 }
 
-#define MODULE(Name) \
+#define MODULE(Name, name, ...) \
     internal void                                                                                      \
-    Platform_LoadModule_##Name(module *Module)                                                         \
+    Platform_LoadModule_##Name(name##_module *Module)                                                         \
     {                                                                                                  \
         datetime LastWriteTime;                                                                        \
         Platform_GetFileTime("build\\" #Name ".dll", 0, 0, &LastWriteTime);                     \
@@ -584,8 +584,8 @@ Platform_Entry(void)
     Stack = Platform->Stack = Stack_Init(Mem, Size);
     
     b08 ShouldInitialize = FALSE;
-    #define MODULE(Name)                                       \
-        module Name##Module = {0};                             \
+    #define MODULE(Name, name, ...)                            \
+        name##_module Name##Module = {0};                      \
         Platform_LoadModule_##Name(&Name##Module);             \
         ShouldInitialize |= Name##Module.ShouldBeInitialized;
     MODULES
@@ -632,9 +632,9 @@ Platform_Entry(void)
     Assert(Res == TRUE);
     
     b08 ShouldUpdate = FALSE;
-    #define MODULE(Name)                               \
+    #define MODULE(Name, ...)                         \
         if(Name##Module.ShouldBeInitialized)          \
-            Name##_Init();                             \
+            Name##_Init();                            \
         ShouldUpdate |= Name##Module.ShouldBeUpdated;
     MODULES
     #undef MODULE
@@ -647,7 +647,7 @@ Platform_Entry(void)
     Platform->ExecutionState = ShouldUpdate ? EXECUTION_RUNNING : EXECUTION_ENDED;
     while(Platform->ExecutionState == EXECUTION_RUNNING) {
         // Will reload the modules if necessary
-        #define MODULE(Name) \
+        #define MODULE(Name, ...) \
             Platform_LoadModule_##Name(&Name##Module);
         MODULES
         #undef MODULE
@@ -681,7 +681,7 @@ Platform_Entry(void)
         }
         #endif
         
-        #define MODULE(Name)                  \
+        #define MODULE(Name, ...)            \
             if(Name##Module.ShouldBeUpdated) \
                 Name##_Update();
         MODULES
@@ -700,7 +700,7 @@ Platform_Entry(void)
         Platform->FPS = CountsPerSecond / (r64)ElapsedTime;
     }
     
-    #define MODULE(Name) \
+    #define MODULE(Name, ...) \
         Name##_Unload();
     MODULES
     #undef MODULE

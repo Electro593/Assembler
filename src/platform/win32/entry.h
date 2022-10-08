@@ -13,11 +13,14 @@
 #define SHADERS_DIR  "assets\\shaders\\"
 #define TEXTURES_DIR "assets\\textures\\"
 
-typedef struct module {
-    datetime LastWriteTime;
-    win32_module DLL;
-    vptr State;
-    b08 ShouldBeInitialized;
-    b08 ShouldBeUpdated;
-    b08 RequiresGraphics;
-} module;
+#define MODULE(Name, name, ...)    \
+    struct name##_module {         \
+        datetime LastWriteTime;    \
+        win32_module DLL;          \
+        b08 ShouldBeInitialized;   \
+        b08 ShouldBeUpdated;       \
+        b08 RequiresGraphics;      \
+        name##_state State;        \
+    };
+MODULES
+#undef MODULE

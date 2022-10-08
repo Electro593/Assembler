@@ -337,6 +337,12 @@ U08_Lerp(u08 A, u08 B, r32 T)
     return A + (u08)(T * ((r32)B - A));
 }
 
+internal u32
+U32_Min(u32 A, u32 B)
+{
+    return (A < B) ? A : B;
+}
+
 
 
 

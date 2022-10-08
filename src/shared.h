@@ -85,21 +85,46 @@ typedef u32 c32;
 typedef struct platform_state platform_state;
 typedef struct platform_exports platform_exports;
 
-#if 0
+#define TYPES \
+    ENUM(U32,    u32) \
+    ENUM(U64,    u64) \
+    ENUM(STR,    c08*) \
+    ENUM(VPTR,   vptr) \
 
-// typedef struct renderer_state renderer_state;
-// typedef struct game_state game_state;
+typedef enum type_id {
+    TYPEID_NONE,
+    
+    #define ENUM(Name, Type) \
+        TYPEID_##Name,
+    TYPES
+    #undef ENUM
+    
+    TYPEID_EXTRA_EXP = 8,
+    TYPEID_MOD_EXP   = 4,
+    
+    TYPEID_TYPE_MASK  = (1<<TYPEID_EXTRA_EXP)-1,
+    TYPEID_MOD_MASK   = ~((1<<(32-TYPEID_MOD_EXP))-1), 
+    TYPEID_EXTRA_MASK = ~(TYPEID_TYPE_MASK | TYPEID_MOD_MASK),
+    
+    TYPEID_MEMBER   = 0x10000000,
+} type_id;
 
-// typedef struct renderer_exports renderer_exports;
-#ifdef _OPENGL
-typedef struct opengl_funcs opengl_funcs;
-#endif
-// typedef struct game_exports game_exports;
+typedef struct type {
+    type_id ID;
+    u32 Size;
+} type;
 
-#endif
+global type TYPE_NONE = {TYPEID_NONE, 0};
+#define ENUM(Name, Type) \
+    global type TYPE_##Name = {TYPEID_##Name, sizeof(Type)};
+TYPES
+#undef ENUM
 
-#define MODULES \
-    MODULE(Assembler) \
+#undef TYPES
+
+internal type MakeMemberType(type_id TypeID, u32 Offset, u32 Size) {
+    return (type){TYPEID_MEMBER | ((Offset<<TYPEID_EXTRA_EXP)&TYPEID_MOD_MASK) | TypeID, Size};
+}
 
 #include <util/intrin.h>
 #include <util/scalar.h>
@@ -111,14 +136,17 @@ typedef struct opengl_funcs opengl_funcs;
     #include <renderer/opengl/opengl.h>
     #include <renderer/opengl/mesh.h>
 #endif
-// #include <game/msdf.h>
-// #include <renderer/font.h>
-#include <platform/platform.h>
-// #include <game/file.h>
-// #include <game/ui.h>
-// #include <renderer/renderer.h>
-// #include <game/world.h>
-// #include <game/game.h>
+
+#define MODULES \
+    MODULE(Assembler, assembler) \
+
+#define MODULE(Name, name, ...) \
+    typedef struct name##_module name##_module;
+MODULES
+#undef MODULE
+
 #include <assembler/module.h>
+
+#include <platform/platform.h>
 
 s32 _fltused;

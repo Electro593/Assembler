@@ -23,14 +23,14 @@
 #define R64_NAN(Payload) LITERAL_CAST(u64, R64_EXPONENT_MASK | (Payload & R64_MANTISSA_MASK), r64)
 #define R64_INF R64_NAN(0);
 
-#define S08_MIN 0x80
-#define S08_MAX 0x7F
-#define S16_MIN 0x8000
-#define S16_MAX 0x7FFF
-#define S32_MIN 0x80000000
-#define S32_MAX 0x7FFFFFFF
-#define S64_MIN 0x8000000000000000
-#define S64_MAX 0x7FFFFFFFFFFFFFFF
+#define S08_MIN (s08)(u08)0x80
+#define S08_MAX (s08)(u08)0x7F
+#define S16_MIN (s16)(u16)0x8000
+#define S16_MAX (s16)(u16)0x7FFF
+#define S32_MIN (s32)(u32)0x80000000
+#define S32_MAX (s32)(u32)0x7FFFFFFF
+#define S64_MIN (s64)(u64)0x8000000000000000
+#define S64_MAX (s64)(u64)0x7FFFFFFFFFFFFFFF
 
 #define U08_MAX 0xFF
 #define U16_MAX 0xFFFF

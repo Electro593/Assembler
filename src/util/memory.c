@@ -448,6 +448,12 @@ Stack_Push(void)
     Stack->Cursor += sizeof(vptr);
 }
 
+internal vptr
+Stack_GetEntry(void)
+{
+    return (u08*)Stack->FirstMarker + sizeof(vptr);
+}
+
 // For unbounded allocations
 internal vptr Stack_GetCursor(void) { return Stack->Cursor; }
 internal void

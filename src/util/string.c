@@ -748,6 +748,43 @@ String_Terminate(string A)
     return Result;
 }
 
+internal s08
+_String_CmpCaseInsensitive(string *A, string *B)
+{
+    Assert(A && B);
+    
+    if(A->Length < B->Length) return LESS;
+    if(A->Length > B->Length) return GREATER;
+    
+    u32 I = 0;
+    while(I < A->Length) {
+        c08 CA = (A->Text[I] < 'a') ? A->Text[I] : (A->Text[I] - ('a'-'A'));
+        c08 CB = (B->Text[I] < 'a') ? B->Text[I] : (B->Text[I] - ('a'-'A'));
+        if(CA != CB) break;
+        I++;
+    }
+    
+    if(I == A->Length) return EQUAL;
+    if(A->Text[I] < B->Text[I]) return LESS;
+    return GREATER;
+}
+
+internal s08
+_String_Cmp(string *A, string *B)
+{
+    Assert(A && B);
+    
+    if(A->Length < B->Length) return LESS;
+    if(A->Length > B->Length) return GREATER;
+    
+    u32 I = 0;
+    while(I < A->Length && A->Text[I] == B->Text[I]) I++;
+    
+    if(I == A->Length) return EQUAL;
+    if(A->Text[I] < B->Text[I]) return LESS;
+    return GREATER;
+}
+
 internal string
 U64_ToString(u64 N,
              u08 Radix)
@@ -860,6 +897,14 @@ String_ToS64(string String)
         Total = Total*10 + String.Text[I]-'0';
     
     return Total;
+}
+
+internal s16
+String_ToS16(string String)
+{
+    s64 Result = String_ToS64(String);
+    Assert(S16_MIN <= Result && Result < S16_MAX);
+    return Result;
 }
 
 internal string S32_ToString(s32 N) { return S64_ToString((s64)N); }
