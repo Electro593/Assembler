@@ -33,6 +33,9 @@
 #define MIN(A, B) ((A) < (B) ? (A) : (B))
 #define MAX(A, B) ((A) > (B) ? (A) : (B))
 
+#define _STRINGIFY(X) #X
+#define STRINGIFY(X) _STRINGIFY(X)
+
 #define Error(Message) Platform_Assert(__FILE__, __LINE__, "", Message)
 #define Assert(Expression, ...) \
     do { \

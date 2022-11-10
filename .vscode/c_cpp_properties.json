@@ -11,7 +11,9 @@
                 "_DEBUG=1",
                 "_GAME_MODULE",
                 "_PLATFORM_MODULE",
-                "_RENDERER_MODULE"
+                "_RENDERER_MODULE",
+                "INCLUDE_HEADER",
+                "INCLUDE_SOURCE"
             ],
             "cStandard": "c17",
             "cppStandard": "c++17",

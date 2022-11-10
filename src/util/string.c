@@ -770,19 +770,25 @@ _String_CmpCaseInsensitive(string *A, string *B)
 }
 
 internal s08
+String_Cmp(string A, string B)
+{
+    if(A.Length < B.Length) return LESS;
+    if(A.Length > B.Length) return GREATER;
+    Assert(A.Text && B.Text);
+    
+    u32 I = 0;
+    while(I < A.Length && A.Text[I] == B.Text[I]) I++;
+    
+    if(I == A.Length) return EQUAL;
+    if(A.Text[I] < B.Text[I]) return LESS;
+    return GREATER;
+}
+
+internal s08
 _String_Cmp(string *A, string *B)
 {
     Assert(A && B);
-    
-    if(A->Length < B->Length) return LESS;
-    if(A->Length > B->Length) return GREATER;
-    
-    u32 I = 0;
-    while(I < A->Length && A->Text[I] == B->Text[I]) I++;
-    
-    if(I == A->Length) return EQUAL;
-    if(A->Text[I] < B->Text[I]) return LESS;
-    return GREATER;
+    return String_Cmp(*A, *B);
 }
 
 internal string

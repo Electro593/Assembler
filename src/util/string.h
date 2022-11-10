@@ -7,6 +7,9 @@
 **                                                                         **
 \* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+#define CLStringL(Literal) CLString(Literal, sizeof(Literal))
+#define CFStringL(Literal, ...) FString(CLStringL(Literal), __VA_ARGS__)
+
 typedef struct string {
     u64 Length;
     u64 Capacity;

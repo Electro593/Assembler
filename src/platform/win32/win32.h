@@ -152,6 +152,11 @@ typedef s64 (API_ENTRY *func_Win32_WindowCallback)(win32_window Window, u32 Mess
 #define WGL_CONTEXT_PROFILE_MASK_ARB           0x9126
 
 
+#define STD_INPUT_HANDLE ((u32)-10)
+#define STD_OUTPUT_HANDLE ((u32)-11)
+#define STD_ERROR_HANDLE ((u32)-12)
+
+
 
 
 
@@ -1130,6 +1135,7 @@ typedef struct win32_raw_input {
     IMPORT(User32,   win32_device_context, GetDC,                     win32_window Window) \
     IMPORT(Kernel32, b08,                  GetFileSizeEx,             win32_handle File, win32_large_integer *FileSize) \
     IMPORT(Kernel32, u32,                  GetLastError,              void) \
+    IMPORT(Kernel32, win32_handle,         GetStdHandle,              u32 ID) \
     IMPORT(Kernel32, b32,                  FileTimeToSystemTime,      win32_file_time *FileTime, win32_system_time *SystemTime) \
     IMPORT(Kernel32, b32,                  GetFileTime,               win32_handle File, win32_file_time *CreationTime, win32_file_time *LastAccessTime, win32_file_time *LastWriteTime) \
     IMPORT(User32,   b32,                  GetMessageA,               win32_message *Msg, win32_window Window, u32 MessageFilterMin, u32 MessageFilterMax) \
@@ -1160,6 +1166,7 @@ typedef struct win32_raw_input {
     IMPORT(Kernel32, vptr,                 VirtualAlloc,              vptr Address, u64 Size, u32 AllocationType, u32 Protect) \
     IMPORT(Kernel32, b08,                  VirtualFree,               vptr Address, u64 Size, u32 FreeType) \
     IMPORT(User32,   b08,                  WaitMessage,               void) \
+    IMPORT(Kernel32, b32,                  WriteConsoleA,             win32_handle Handle, vptr Buffer, u32 Count, u32 *NumWritten, vptr Reserved) \
     IMPORT(Kernel32, b08,                  WriteFile,                 win32_handle File, vptr Buffer, u32 NumberOfBytesToWrite, u32 *NumberOfBytesWritten, win32_overlapped *Overlapped) \
 
 #define WGL_FUNCS_TYPE_1 \

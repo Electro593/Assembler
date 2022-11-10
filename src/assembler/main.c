@@ -7,12 +7,35 @@
 **                                                                         **
 \* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+/*
+root = section,{section} | {statement}
+section = '.section',whitespace,ident,line_end,{statement}
+statement = {label},(instruction | data)
+instruction = ident,whitespace,[(reg|expression),{',',(reg|expression)}],line_end
+data = 'bytes',whitespace,expression,',',(expression | '[',expression,{',',expression},']'),line_end
+expression = number | label_reference | {'('},[expression],{op,expression},{')'}
+
+comment = '#',{printable characters},line_end | '#*',{comment|printable characters},'*#'
+op = '-','*','<<','>>','+','/','%','^','&','|','~','!','<','>','<=','>=','==','!=','^^','&&','||','(',')'
+label = ident,':',{line_end}
+label_reference = ident
+reg = 'zro'|'ra'|('s',('0'|'1'|'2'|'3'|'4'|'5'|'6'))|('a',('0'|'1'|'2'|'3'|'4'|'5'|'6'))
+ident = (letters|'_'),{letters,numbers,'_'}
+number = numbers,{numbers} | (numbers|letters|'$'|'@'),{numbers|letters|'$'|'@'},radix
+radix = '`',numbers,{numbers}
+letters = ? All alphabetical letters, lowercase and uppercase ?
+numbers = '0'|'1'|'2'|'3'|'4'|'5'|'6'|'7'|'8'|'9'|'_'
+line_end = -'\\','\n' | ';'
+whitespace = {' '|'\t'|'\r'}
+*/
+
 #include <shared.h>
 
 global stack *Stack;
 global heap *_Heap;
 
 typedef struct instruction {
+   u32 Type   : 2;
    u32 Opcode : 5;
    u32 Fn     : 4;
    u32 Fmt    : 3;
@@ -29,7 +52,21 @@ typedef struct instruction {
 #include <util/string.c>
 #include <util/set.c>
 
-typedef enum assembly_fmt {
+#define AAssert(Expression, ...) \
+   do { \
+      if(!(Expression)) { \
+         c08 Message[] = "(In the assembler's " __FILE__ " at line " STRINGIFY(__LINE__) "): " __VA_ARGS__ "\n"; \
+         Assembler_Log(NULL, NULL, AssemblerErrorF, CLStringL(Message)); \
+      } \
+   } while(0)
+
+typedef enum instruction_type {
+   InstType_Text = 0b00,
+   InstType_Data = 0b01,
+   InstType_BSS  = 0b10,
+} instruction_type;
+
+typedef enum instruction_fmt {
    FMT_B1R0  = 0b000,
    FMT_B1R0e = 0b001,
    FMT_B1R1  = 0b010,
@@ -38,47 +75,50 @@ typedef enum assembly_fmt {
    FMT_B2R1  = 0b101,
    FMT_B2R1f = 0b110,
    FMT_B2R2  = 0b111,
-} assembly_fmt;
+} instruction_fmt;
 
    //    Name     Opcode     Fmt        Fn   Size  OpN   Mod   Op1   Op2   Op3
 #define INSTRUCTIONS \
-   INST("and",   0b00000, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("slt",   0b10000, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("or",    0b01000, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("xor",   0b11000, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("sll",   0b00100, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("sgt",   0b10100, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("srl",   0b01100, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("sra",   0b11100, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("add",   0b00010, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("sub",   0b10010, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("sac",   0b01010, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("lac",   0b11010, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("saci",  0b00110, FMT_B1R0,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("jalr",  0b10110, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
-   INST("icall", 0b01110, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b01, 0b00, 0b00) \
-   INST("ecall", 0b11110, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b01, 0b00, 0b00) \
-   INST("andi",  0b00001, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
-   INST("slti",  0b10001, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
-   INST("ori",   0b01001, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
-   INST("xori",  0b11001, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
-   INST("slli",  0b00101, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
-   INST("sgti",  0b10101, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
-   INST("srli",  0b01101, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
-   INST("srai",  0b11101, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
-   INST("addi",   0b0011, FMT_B1R0e, 0b0000, 0b0, 0b00, 0b01, 0b10, 0b00, 0b00) \
-   INST("lui",    0b1011, FMT_B2R0e, 0b0000, 0b1, 0b00, 0b01, 0b10, 0b00, 0b00) \
-   INST("push",  0b00000, FMT_B2R1f, 0b0000, 0b1, 0b01, 0b10, 0b00, 0b00, 0b00) \
-   INST("pop",   0b00000, FMT_B2R1f, 0b0001, 0b1, 0b01, 0b10, 0b00, 0b00, 0b00) \
-   INST("addsp", 0b00100, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b00, 0b00, 0b00) \
-   INST("ssp",   0b01000, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
-   INST("lsp",   0b01100, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
-   INST("sm",    0b10000, FMT_B2R2,  0b0000, 0b1, 0b10, 0b00, 0b01, 0b01, 0b00) \
-   INST("lm",    0b10100, FMT_B2R2,  0b0000, 0b1, 0b10, 0b00, 0b01, 0b01, 0b00) \
-   INST("swp",   0b01001, FMT_B2R2,  0b0000, 0b1, 0b10, 0b00, 0b01, 0b01, 0b00) \
-   INST("jal",   0b10110, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
-   INST("bez",   0b11010, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
-   INST("bnez",  0b11110, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("and",   InstType_Text, 0b00000, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("slt",   InstType_Text, 0b10000, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("or",    InstType_Text, 0b01000, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("xor",   InstType_Text, 0b11000, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("sll",   InstType_Text, 0b00100, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("sgt",   InstType_Text, 0b10100, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("srl",   InstType_Text, 0b01100, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("sra",   InstType_Text, 0b11100, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("add",   InstType_Text, 0b00010, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("sub",   InstType_Text, 0b10010, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("sac",   InstType_Text, 0b01010, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("lac",   InstType_Text, 0b11010, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("saci",  InstType_Text, 0b00110, FMT_B1R0,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("jalr",  InstType_Text, 0b10110, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
+   INST("icall", InstType_Text, 0b01110, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b01, 0b00, 0b00) \
+   INST("ecall", InstType_Text, 0b11110, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b01, 0b00, 0b00) \
+   INST("andi",  InstType_Text, 0b00001, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("slti",  InstType_Text, 0b10001, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("ori",   InstType_Text, 0b01001, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("xori",  InstType_Text, 0b11001, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("slli",  InstType_Text, 0b00101, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("sgti",  InstType_Text, 0b10101, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("srli",  InstType_Text, 0b01101, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("srai",  InstType_Text, 0b11101, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("addi",  InstType_Text,  0b0011, FMT_B1R0e, 0b0000, 0b0, 0b00, 0b01, 0b10, 0b00, 0b00) \
+   INST("lui",   InstType_Text,  0b1011, FMT_B2R0e, 0b0000, 0b1, 0b00, 0b01, 0b10, 0b00, 0b00) \
+   INST("push",  InstType_Text, 0b00000, FMT_B2R1f, 0b0000, 0b1, 0b01, 0b10, 0b00, 0b00, 0b00) \
+   INST("pop",   InstType_Text, 0b00000, FMT_B2R1f, 0b0001, 0b1, 0b01, 0b10, 0b00, 0b00, 0b00) \
+   INST("addsp", InstType_Text, 0b00100, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b00, 0b00, 0b00) \
+   INST("ssp",   InstType_Text, 0b01000, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("lsp",   InstType_Text, 0b01100, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("sm",    InstType_Text, 0b10000, FMT_B2R2,  0b0000, 0b1, 0b10, 0b00, 0b01, 0b01, 0b00) \
+   INST("lm",    InstType_Text, 0b10100, FMT_B2R2,  0b0000, 0b1, 0b10, 0b00, 0b01, 0b01, 0b00) \
+   INST("swp",   InstType_Text, 0b01001, FMT_B2R2,  0b0000, 0b1, 0b10, 0b00, 0b01, 0b01, 0b00) \
+   INST("jal",   InstType_Text, 0b10110, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("bez",   InstType_Text, 0b11010, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("bnez",  InstType_Text, 0b11110, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   \
+   INST("bytes", InstType_Data, 0,0,0,0,0,0,0,0,0) \
+   INST("resvd", InstType_BSS,  0,0,0,0,0,0,0,0,0) \
 
 const u32 INSTMAP_SIZE = 2*(0
    #define INST(...) +1
@@ -98,6 +138,12 @@ typedef struct instmap_entry {
 #include <assembler/table.h>
 #pragma pack(pop)
 #endif
+
+#define INCLUDE_SOURCE
+   #include <assembler/lexer.c>
+   #include <assembler/parser.c>
+   // #include <assembler/generator.c>
+#undef INCLUDE_SOURCE
 
 internal u64
 Assembler_LabelHash(string *Name)
@@ -195,15 +241,15 @@ PrintTableEntry(c08 *C, u64 Hash, string Key, instruction Value)
       *C++ = '}';
       *C++ = ',';
       *C++ = '{';
-      if(Value.Opcode >= 10) *C++ = ((Value.Opcode / 10) % 10) + '0';
-      *C++ = (Value.Opcode % 10) + '0';
+      C = PrintU64ToBuffer(C, Value.Type);
       *C++ = ',';
-      if(Value.Fn >= 10) *C++ = ((Value.Fn / 10) % 10) + '0';
-      *C++ = (Value.Fn % 10) + '0';
+      C = PrintU64ToBuffer(C, Value.Opcode);
       *C++ = ',';
-      *C++ = Value.Fmt + '0';
+      C = PrintU64ToBuffer(C, Value.Fn);
       *C++ = ',';
-      *C++ = Value.Size + '0';
+      C = PrintU64ToBuffer(C, Value.Fmt);
+      *C++ = ',';
+      C = PrintU64ToBuffer(C, Value.Size);
       *C++ = '}';
    }
    *C++ = '}';
@@ -211,12 +257,6 @@ PrintTableEntry(c08 *C, u64 Hash, string Key, instruction Value)
    *C++ = '\n';
    return C;
 }
-
-#define INCLUDE_SOURCE
-   #include <assembler/lexer.c>
-   #include <assembler/parser.c>
-   #include <assembler/generator.c>
-#undef INCLUDE_SOURCE
 
 external void
 Assembler_Load(platform_state *Platform, assembler_module *Module)
@@ -288,20 +328,24 @@ Assembler_Load(platform_state *Platform, assembler_module *Module)
    file_handle File;
    Platform_OpenFile(&File, AsmFileName.Text, FILE_READ);
    u64 FileLen = Platform_GetFileLength(File);
-   c08 *FileData = Stack_Allocate(FileLen+1);
+   c08 *FileData = Heap_AllocateA(_Heap, FileLen+1);
    string FileStr = CLString(FileData, FileLen);
    Platform_ReadFile(File, FileData, FileLen, 0);
    FileData[FileLen] = 0;
    
    hashmap LabelMap = HashMap_Init(_Heap, sizeof(string), sizeof(u16), 13, 2, 0.5, (hash_func*)&Assembler_LabelHash, (cmp_func*)&_String_Cmp, NULL);
    
-   heap_handle *Tokens = TokenizeFile(FileStr);
-   heap_handle *AST = ParseTokens(&_InstMap, Tokens);
-   heap_handle *Output = GenerateASM(AST, &LabelMap);
+   token *Tokens = TokenizeFile(FileStr);
+   parser Parser = ParseTokens(Tokens, &_InstMap, AsmFileName);
+   // heap_handle *AST = ParseTokens(&_InstMap, Tokens);
+   // u08 *Output = GenerateASM(AST, &LabelMap);
+   u08 *Output = NULL;
+   
+   heap_handle *OutputHandle = Heap_GetHandleA(Output);
    
    Platform_CloseFile(File);
    Platform_OpenFile(&File, ObjFileName.Text, FILE_WRITE);
-   Platform_WriteFile(File, Output->Data, Output->Size, 0);
+   Platform_WriteFile(File, OutputHandle->Data, OutputHandle->Size, 0);
    Platform_CloseFile(File);
    #else
 
@@ -312,7 +356,7 @@ Assembler_Load(platform_state *Platform, assembler_module *Module)
    
    string NameStr;
    instruction Inst;
-   #define INST(Name, Opcode, Fmt, Fn, Size, OpN, Mod, Op1, Op2, Op3) \
+   #define INST(Name, Type, Opcode, Fmt, Fn, Size, OpN, Mod, Op1, Op2, Op3) \
       NameStr = CString(Name); \
       Inst = (instruction){Opcode, Fn, Fmt, Size}; \
       HashMap_Add(&Map, &NameStr, &Inst);

@@ -237,6 +237,8 @@ typedef enum file_mode {
     EXPORT(b08,          Platform, OpenFile,       file_handle *FileHandle, c08 *FileName, file_mode OpenMode) \
     EXPORT(u64,          Platform, ReadFile,       file_handle FileHandle, vptr Dest, u64 Length, u64 Offset) \
     INTERN(s64,          Platform, WindowCallback, win32_window Window, u32 Message, s64 WParam, s64 LParam) \
+    EXPORT(void,         Platform, WriteConsole,   string Message) \
+    EXPORT(void,         Platform, WriteError,     string Message, u32 Exit) \
     EXPORT(u64,          Platform, WriteFile,      file_handle FileHandle, vptr Src, u64 Length, u64 Offset) \
 
 #define EXPORT(ReturnType, Namespace, Name, ...) \

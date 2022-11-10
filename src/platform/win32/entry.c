@@ -340,6 +340,21 @@ Platform_WriteFile(file_handle FileHandle,
 }
 
 internal void
+Platform_WriteConsole(string Message)
+{
+    win32_handle Handle = Win32_GetStdHandle(STD_OUTPUT_HANDLE);
+    Win32_WriteConsoleA(Handle, Message.Text, Message.Length, NULL, NULL);
+}
+
+internal void
+Platform_WriteError(string Message, u32 Exit)
+{
+    win32_handle Handle = Win32_GetStdHandle(STD_ERROR_HANDLE);
+    Win32_WriteConsoleA(Handle, Message.Text, Message.Length, NULL, NULL);
+    if(Exit) Win32_ExitProcess(Exit);
+}
+
+internal void
 Platform_CloseFile(file_handle FileHandle)
 {
     Win32_CloseHandle(FileHandle);
