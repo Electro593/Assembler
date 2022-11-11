@@ -7,7 +7,7 @@
 **                                                                         **
 \* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-#define CLStringL(Literal) CLString(Literal, sizeof(Literal))
+#define CLStringL(Literal) CLString(Literal, sizeof(Literal)-1)
 #define CFStringL(Literal, ...) FString(CLStringL(Literal), __VA_ARGS__)
 
 typedef struct string {

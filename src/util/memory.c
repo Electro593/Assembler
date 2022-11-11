@@ -182,8 +182,6 @@ _Heap_Allocate(heap *Heap,
     heap_handle *Handle = NULL;
     b08 Defragmented = FALSE;
     
-    if(Anchored) Size += sizeof(heap_handle*);
-    
     heap_handle *PrevUsed;
     if(Handles[0].NextFree == 0) {
         if(Handles[0].Offset < sizeof(heap_handle)) {
@@ -218,8 +216,6 @@ _Heap_Allocate(heap *Heap,
     Handle->Free = FALSE;
     
     Heap_AllocateBlock(Heap, Handle, Size);
-    
-    if(Anchored) *(heap_handle**)Handle->Data = Handle;
     
     return Handle;
 }
@@ -470,12 +466,6 @@ Stack_Push(void)
     *Marker = Stack->FirstMarker;
     Stack->FirstMarker = Marker;
     Stack->Cursor += sizeof(vptr);
-}
-
-internal vptr
-Stack_GetEntry(void)
-{
-    return (u08*)Stack->FirstMarker + sizeof(vptr);
 }
 
 // For unbounded allocations

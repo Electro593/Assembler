@@ -20,20 +20,20 @@ typedef enum ast_node_type {
    ASTType_Register,
    ASTType_Immediate,
    ASTType_Label,
-   ASTType_LabelReference,
 } ast_node_type;
 
 typedef struct ast_node {
    ast_node_type Type;
    
-   u32 ChildCount;
+   s32 ChildCount;
    struct ast_node *Prev;
    struct ast_node *Next;
    struct ast_node *FirstChild;
+   
+   token *Token;
 } ast_node;
 
 ast_node *NullNode;
-ast_node _NullNode = {0};
 
 typedef struct ast_root {
    ast_node Header;
@@ -41,8 +41,6 @@ typedef struct ast_root {
 
 typedef struct ast_section {
    ast_node Header;
-   
-   string Name;
 } ast_section;
 
 typedef struct ast_statement {
@@ -52,7 +50,6 @@ typedef struct ast_statement {
 typedef struct ast_instruction {
    ast_node Header;
    
-   string Name;
    instruction Instruction;
 } ast_instruction;
 
@@ -63,20 +60,15 @@ typedef struct ast_array {
 typedef struct ast_operation {
    ast_node Header;
    
-   token_type Type;
+   // 0 if prefix
+   // 1 if infix binary or postfix unary
+   // 2 if postfix binary, etc.
+   int OperatorIndex;
 } ast_operation;
 
 typedef struct ast_identifier {
    ast_node Header;
-   
-   string Name;
 } ast_identifier;
-
-typedef struct ast_register {
-   ast_node Header;
-   
-   u08 Value;
-} ast_register;
 
 typedef struct ast_immediate {
    ast_node Header;
@@ -86,15 +78,7 @@ typedef struct ast_immediate {
 
 typedef struct ast_label {
    ast_node Header;
-   
-   string Name;
 } ast_label;
-
-typedef struct ast_label_reference {
-   ast_node Header;
-   
-   string Name;
-} ast_label_reference;
 
 typedef struct parser {
    token *Tokens;
@@ -103,6 +87,7 @@ typedef struct parser {
    
    ast_root *AST;
    ast_node *Parent;
+   token *DummySection;
    
    string FileName;
    hashmap *InstMap;
@@ -192,6 +177,7 @@ Assembler_Log(parser *Parser, token *Token, log_type Type, string Message)
    
    if(Parser && Token) Platform_WriteError(FString(CLStringL("%s in %s on line %d, column %d: %s"), LogHeader, Parser->FileName, Token->LineNumber, Token->ColumnNumber, Message), IsFatal);
    else if(Parser)     Platform_WriteError(FString(CLStringL("%s in %s: %s"), LogHeader, Parser->FileName, Message), IsFatal);
+   else if(Token)      Platform_WriteError(FString(CLStringL("%s on line %d, column %d: %s"), LogHeader, Token->LineNumber, Token->ColumnNumber, Message), IsFatal);
    else                Platform_WriteError(FString(CLStringL("%s: %s"), LogHeader, Message), IsFatal);
 }
 
@@ -302,19 +288,19 @@ internal s32
 GetPrecedenceFromNode(ast_operation *Node)
 {
    u32 Types[] = {
-      NullaryPrecedences[Node->Type & TokenType_Mask] & 0x80000000,
-      UnaryPrefixPrecedences[Node->Type & TokenType_Mask] & 0x80000000,
-      UnaryPostfixPrecedences[Node->Type & TokenType_Mask] & 0x80000000,
-      BinaryInfixPrecedences[Node->Type & TokenType_Mask] & 0x80000000,
-      TernaryPrecedences[Node->Type & TokenType_Mask] & 0x80000000,
+      NullaryPrecedences[Node->Header.Token->Type & TokenType_Mask] & 0x80000000,
+      UnaryPrefixPrecedences[Node->Header.Token->Type & TokenType_Mask] & 0x80000000,
+      UnaryPostfixPrecedences[Node->Header.Token->Type & TokenType_Mask] & 0x80000000,
+      BinaryInfixPrecedences[Node->Header.Token->Type & TokenType_Mask] & 0x80000000,
+      TernaryPrecedences[Node->Header.Token->Type & TokenType_Mask] & 0x80000000,
    };
    
    u32 Precedences[] = {
-      (s32)(NullaryPrecedences[Node->Type & TokenType_Mask] & 0x7FFFFFFF) << 1 >> 1,
-      (s32)(UnaryPrefixPrecedences[Node->Type & TokenType_Mask] & 0x7FFFFFFF) << 1 >> 1,
-      (s32)(UnaryPostfixPrecedences[Node->Type & TokenType_Mask] & 0x7FFFFFFF) << 1 >> 1,
-      (s32)(BinaryInfixPrecedences[Node->Type & TokenType_Mask] & 0x7FFFFFFF) << 1 >> 1,
-      (s32)(TernaryPrecedences[Node->Type & TokenType_Mask] & 0x7FFFFFFF) << 1 >> 1,
+      (s32)(NullaryPrecedences[Node->Header.Token->Type & TokenType_Mask] & 0x7FFFFFFF) << 1 >> 1,
+      (s32)(UnaryPrefixPrecedences[Node->Header.Token->Type & TokenType_Mask] & 0x7FFFFFFF) << 1 >> 1,
+      (s32)(UnaryPostfixPrecedences[Node->Header.Token->Type & TokenType_Mask] & 0x7FFFFFFF) << 1 >> 1,
+      (s32)(BinaryInfixPrecedences[Node->Header.Token->Type & TokenType_Mask] & 0x7FFFFFFF) << 1 >> 1,
+      (s32)(TernaryPrecedences[Node->Header.Token->Type & TokenType_Mask] & 0x7FFFFFFF) << 1 >> 1,
    };
    
    if(Node->Header.ChildCount == 0) return Precedences[0];
@@ -337,12 +323,13 @@ GetPrecedenceFromNode(ast_operation *Node)
 }
 
 internal ast_node *
-CreateASTNode(ast_node *Parent, u32 Size, ast_node_type Type)
+CreateASTNode(ast_node *Parent, token *Token, u32 Size, ast_node_type Type)
 {
    ast_node *Node = Heap_AllocateA(_Heap, Size);
    Node->Type = Type;
    Node->ChildCount = 0;
    Node->FirstChild = NullNode;
+   Node->Token = Token;
    
    if(Parent) AddChild(Parent, Node, -1);
    else {
@@ -356,52 +343,48 @@ CreateASTNode(ast_node *Parent, u32 Size, ast_node_type Type)
 internal ast_root *
 CreateASTRoot(void)
 {
-   return (vptr)CreateASTNode(NULL, sizeof(ast_root), ASTType_Root);
+   return (vptr)CreateASTNode(NULL, NULL, sizeof(ast_root), ASTType_Root);
 }
 
 internal ast_section *
-CreateASTSection(string Name, ast_node *Parent)
+CreateASTSection(ast_node *Parent, token *Token)
 {
-   ast_section *Node = (vptr)CreateASTNode(Parent, sizeof(ast_section), ASTType_Section);
-   Node->Name = Name;
+   ast_section *Node = (vptr)CreateASTNode(Parent, Token, sizeof(ast_section), ASTType_Section);
    return Node;
 }
 
 internal ast_statement *
-CreateASTStatement(ast_node *Parent)
+CreateASTStatement(ast_node *Parent, token *Token)
 {
-   return (vptr)CreateASTNode(Parent, sizeof(ast_statement), ASTType_Statement);
+   return (vptr)CreateASTNode(Parent, Token, sizeof(ast_statement), ASTType_Statement);
 }
 
 internal ast_label *
-CreateASTLabel(string Name, ast_node *Parent)
+CreateASTLabel(ast_node *Parent, token *Token)
 {
-   ast_label *Node = (vptr)CreateASTNode(Parent, sizeof(ast_label), ASTType_Label);
-   Node->Name = Name;
+   ast_label *Node = (vptr)CreateASTNode(Parent, Token, sizeof(ast_label), ASTType_Label);
    return Node;
 }
 
 internal ast_instruction *
-CreateASTInstruction(string Name, instruction Inst, ast_node *Parent)
+CreateASTInstruction(instruction Inst, ast_node *Parent, token *Token)
 {
-   ast_instruction *Node = (vptr)CreateASTNode(Parent, sizeof(ast_instruction), ASTType_Instruction);
-   Node->Name = Name;
+   ast_instruction *Node = (vptr)CreateASTNode(Parent, Token, sizeof(ast_instruction), ASTType_Instruction);
    Node->Instruction = Inst;
    return Node;
 }
 
 internal ast_identifier *
-CreateASTIdentifier(string Name, ast_node *Parent)
+CreateASTIdentifier(ast_node *Parent, token *Token)
 {
-   ast_identifier *Node = (vptr)CreateASTNode(Parent, sizeof(ast_identifier), ASTType_Identifier);
-   Node->Name = Name;
+   ast_identifier *Node = (vptr)CreateASTNode(Parent, Token, sizeof(ast_identifier), ASTType_Identifier);
    return Node;
 }
 
 internal ast_immediate *
 CreateASTImmediate(parser *Parser, token *Number, token *RadixToken)
 {
-   ast_immediate *Node = (vptr)CreateASTNode(Parser->Parent, sizeof(ast_immediate), ASTType_Immediate);
+   ast_immediate *Node = (vptr)CreateASTNode(Parser->Parent, Number, sizeof(ast_immediate), ASTType_Immediate);
    
    u64 Radix = (RadixToken) ? ParseNumber(Parser, RadixToken, 10) : 10;
    if(Radix < 2 || Radix > 64) Assembler_Log(Parser, RadixToken, SyntaxErrorF, CFStringL("Radixes can only be between 2 and 64, but this one isn't: %d\n", Radix));
@@ -411,10 +394,10 @@ CreateASTImmediate(parser *Parser, token *Number, token *RadixToken)
 }
 
 internal ast_operation *
-CreateASTOperation(token_type Type, ast_node *Parent)
+CreateASTOperation(int operatorIndex, ast_node *Parent, token *Token)
 {
-   ast_operation *Node = (vptr)CreateASTNode(Parent, sizeof(ast_operation), ASTType_Operation);
-   Node->Type = Type;
+   ast_operation *Node = (vptr)CreateASTNode(Parent, Token, sizeof(ast_operation), ASTType_Operation);
+   Node->OperatorIndex = operatorIndex;
    return Node;
 }
 
@@ -502,7 +485,7 @@ AcceptIdentifier(parser *Parser)
    token *Ident = AcceptToken(Parser, TokenType_Identifier);
    if(!Ident) return NULL;
    
-   return CreateASTIdentifier(Ident->Str, Parser->Parent);
+   return CreateASTIdentifier(Parser->Parent, Ident);
 }
 
 internal ast_label *
@@ -519,7 +502,7 @@ AcceptLabel(parser *Parser)
    Token = AcceptToken(Parser, TokenType_LabelEnd);
    if(!Token) goto ret;
    
-   return CreateASTLabel(Ident->Str, Parser->Parent);
+   return CreateASTLabel(Parser->Parent, Ident);
    
    ret:
    Parser->Index = Index;
@@ -546,98 +529,127 @@ AcceptImmediate(parser *Parser)
    return NULL;
 }
 
-internal ast_operation *
-AcceptOperator(parser *Parser)
-{
-   //TODO: Do this
+// internal ast_operation *
+// AcceptOperator(parser *Parser)
+// {
+//    //TODO: Do this
    
-   return NULL;
-}
+//    return NULL;
+// }
 
-internal ast_array *
-AcceptArray(parser *Parser)
-{
-   //TODO: Do this
+// internal ast_array *
+// AcceptArray(parser *Parser)
+// {
+//    //TODO: Do this
    
-   return NULL;
-}
+//    return NULL;
+// }
 
 internal ast_node *
-AcceptExpression(parser *Parser, b08 *FinalExpression)
+AcceptExpression(parser *Parser)
 {
-   ast_node *Parent = Parser->Parent;
    u32 Index = Parser->Index;
-   token *Token;
+   ast_node *Parent = Parser->Parent;
    
-   Token = AcceptToken(Parser, TokenType_LineSeparator);
-   if(Token) goto ret_null;
-   Token = AcceptToken(Parser, TokenType_ListSeparator);
-   if(Token) goto ret_null;
-   
-   // Array (data)
-   ast_node *Left = (vptr)AcceptArray(Parser);
-   if(Left) goto ret;
-   
-   Left = (vptr)AcceptIdentifier(Parser);
-   if(!Left) Left = (vptr)AcceptImmediate(Parser);
-   
-   b08 IsPartial = FALSE;
+   token *Negative = AcceptToken(Parser, TokenType_Subtraction);
    ast_operation *Op;
-   Token = GetToken(Parser, 0);
-   Parser->Parent = NULL;
-   while(Op = AcceptOperator(Parser)) {
+   if(Negative) {
+      Op = CreateASTOperation(0, Parser->Parent, Negative);
       Parser->Parent = (ast_node*)Op;
-      ast_node *Right = (vptr)AcceptIdentifier(Parser);
-      if(!Right) Right = (vptr)AcceptImmediate(Parser);
-      Parser->Parent = Parent;
-      
-      b08 RightToLeft;
-      u32 Precedence = GetPrecedence(Op->Type, &IsPartial, &RightToLeft);
-      if( Right && Precedence == -1) Assembler_Log(Parser, Token, SyntaxErrorF, CFStringL("There isn't any binary operator '%s'\n", Token->Str));
-      if(!Right && Precedence == -1) Assembler_Log(Parser, Token, SyntaxErrorF, CFStringL("There isn't any unary operator '%s'\n", Token->Str));
-      
-      ast_node *ParentOp = Parent;
-      ast_node *CurrOp;
-      
-      while(ParentOp != NullNode) {
-         CurrOp = ParentOp->FirstChild->Prev;
-         
-         s32 CurrPrecedence = 0;
-         if(CurrOp->Type & TokenGroup_Mask) {
-            b08 _RightToLeft;
-            CurrPrecedence = GetPrecedenceFromNode((vptr)CurrOp);
-            AAssert(CurrPrecedence != -1, "Unknown operator!");
-         }
-         
-         if(CurrPrecedence < Precedence || (!RightToLeft && (u32)CurrPrecedence == Precedence)) {
-            if(CurrOp != NullNode) RemoveChild(ParentOp, -1);
-            AddChild(ParentOp, (ast_node*)Op, -1);
-            AddChild((ast_node*)Op, CurrOp, 0);
-            break;
-         }
-         
-         ParentOp = CurrOp;
-      }
-      
-      Left = Right;
    }
+   
+   ast_node  *Value = (vptr)AcceptIdentifier(Parser);
+   if(!Value) Value = (vptr)AcceptImmediate(Parser);
+   if(!Value) goto ret;
+   
+   Parser->Parent = Parent;
+   if(Negative)
+      return (ast_node*)Op;
+   else
+      return Value;
    
    ret:
-   Parser->Parent = Parent;
-   Token = AcceptToken(Parser, TokenType_ListSeparator);
-   if(Token) {
-      *FinalExpression = FALSE;
-   } else {
-      Token = AcceptToken(Parser, TokenType_LineSeparator);
-      if(!Token) Assembler_Log(Parser, (Token = GetToken(Parser, 0)), SyntaxErrorF, CFStringL("An expression must end with a comma, a semicolon, or a new line. However, this expression ends with '%s'\n", Token->Str));
-      *FinalExpression = TRUE;
+   if(Op) {
+      RemoveChild(Parent, -1);
+      Heap_FreeA(Op);
    }
-   return Left;
-   
-   ret_null:
-   *FinalExpression = TRUE;
+   Parser->Parent = Parent;
    Parser->Index = Index;
    return NULL;
+   
+   // ast_node *Parent = Parser->Parent;
+   // u32 Index = Parser->Index;
+   // token *Token;
+   
+   // Token = AcceptToken(Parser, TokenType_LineSeparator);
+   // if(Token) goto ret_null;
+   // Token = AcceptToken(Parser, TokenType_ListSeparator);
+   // if(Token) goto ret_null;
+   
+   // // Array (data)
+   // ast_node *Left = (vptr)AcceptArray(Parser);
+   // if(Left) goto ret;
+   
+   // Left = (vptr)AcceptIdentifier(Parser);
+   // if(!Left) Left = (vptr)AcceptImmediate(Parser);
+   
+   // b08 IsPartial = FALSE;
+   // ast_operation *Op;
+   // Token = GetToken(Parser, 0);
+   // Parser->Parent = NULL;
+   // while(Op = AcceptOperator(Parser)) {
+   //    Parser->Parent = (ast_node*)Op;
+   //    ast_node *Right = (vptr)AcceptIdentifier(Parser);
+   //    if(!Right) Right = (vptr)AcceptImmediate(Parser);
+   //    Parser->Parent = Parent;
+      
+   //    b08 RightToLeft;
+   //    u32 Precedence = GetPrecedence(Op->Type, &IsPartial, &RightToLeft);
+   //    if( Right && Precedence == -1) Assembler_Log(Parser, Token, SyntaxErrorF, CFStringL("There isn't any binary operator '%s'\n", Token->Str));
+   //    if(!Right && Precedence == -1) Assembler_Log(Parser, Token, SyntaxErrorF, CFStringL("There isn't any unary operator '%s'\n", Token->Str));
+      
+   //    ast_node *ParentOp = Parent;
+   //    ast_node *CurrOp;
+      
+   //    while(ParentOp != NullNode) {
+   //       CurrOp = ParentOp->FirstChild->Prev;
+         
+   //       s32 CurrPrecedence = 0;
+   //       if(CurrOp->Type & TokenGroup_Mask) {
+   //          b08 _RightToLeft;
+   //          CurrPrecedence = GetPrecedenceFromNode((vptr)CurrOp);
+   //          AAssert(CurrPrecedence != -1, "Unknown operator!");
+   //       }
+         
+   //       if(CurrPrecedence < Precedence || (!RightToLeft && (u32)CurrPrecedence == Precedence)) {
+   //          if(CurrOp != NullNode) RemoveChild(ParentOp, -1);
+   //          AddChild(ParentOp, (ast_node*)Op, -1);
+   //          AddChild((ast_node*)Op, CurrOp, 0);
+   //          break;
+   //       }
+         
+   //       ParentOp = CurrOp;
+   //    }
+      
+   //    Left = Right;
+   // }
+   
+   // ret:
+   // Parser->Parent = Parent;
+   // Token = AcceptToken(Parser, TokenType_ListSeparator);
+   // if(Token) {
+   //    *FinalExpression = FALSE;
+   // } else {
+   //    Token = AcceptToken(Parser, TokenType_LineSeparator);
+   //    if(!Token) Assembler_Log(Parser, (Token = GetToken(Parser, 0)), SyntaxErrorF, CFStringL("An expression must end with a comma, a semicolon, or a new line. However, this expression ends with '%s'\n", Token->Str));
+   //    *FinalExpression = TRUE;
+   // }
+   // return Left;
+   
+   // ret_null:
+   // *FinalExpression = TRUE;
+   // Parser->Index = Index;
+   // return NULL;
 }
 
 internal ast_instruction *
@@ -656,14 +668,18 @@ AcceptInstruction(parser *Parser)
    instruction *Inst = HashMap_Get(Parser->InstMap, &Ident->Str);
    if(!Inst) Assembler_Log(Parser, Ident, SyntaxErrorF, CFStringL("The instruction '%s' is unknown, maybe it was misspelled?\n", Ident->Str));
    
-   ast_instruction *Instruction = CreateASTInstruction(Ident->Str, *Inst, Parser->Parent);
+   ast_instruction *Instruction = CreateASTInstruction(*Inst, Parser->Parent, Ident);
    Parser->Parent = (ast_node*)Instruction;
    
-   b08 FinalExpression;
-   while(AcceptExpression(Parser, &FinalExpression), !FinalExpression);
-   
-   Parser->Parent = Parent;
-   return Instruction;
+   while(AcceptExpression(Parser)) {
+      if(AcceptToken(Parser, TokenType_LineSeparator)) {
+         Parser->Parent = Parent;
+         return Instruction;
+      }
+      
+      if(!AcceptToken(Parser, TokenType_ListSeparator))
+         break;
+   }
    
    ret:
    Parser->Index = Index;
@@ -677,21 +693,26 @@ AcceptStatement(parser *Parser)
    u32 Index = Parser->Index;
    token *Token;
    
-   ast_statement *Statement = CreateASTStatement(Parser->Parent);
+   while(Token = AcceptToken(Parser, TokenType_LineSeparator));
+   
+   ast_statement *Statement = CreateASTStatement(Parser->Parent, Parser->Tokens+Parser->Index);
    Parser->Parent = (ast_node*)Statement;
    
    ast_label *Label;
-   while(Label = AcceptLabel(Parser));
+   b08 HasLabel = FALSE;
+   while(Label = AcceptLabel(Parser)) HasLabel = TRUE;
    
    ast_instruction *Instruction = AcceptInstruction(Parser);
-   if(Label && !Instruction) Assembler_Log(Parser, GetToken(Parser, 0), SyntaxErrorF, CFStringL("Labels must apply to an instruction or data, but '%s' is being applied to %s\n", Label->Name, GetStringUntil(Parser, 100, TokenType_LineSeparator)));
-   if(!Label && !Instruction) goto ret;
+   if(HasLabel && !Instruction) Assembler_Log(Parser, GetToken(Parser, 0), SyntaxErrorF, CFStringL("Labels must apply to an instruction or data, but '%s' is being applied to %s\n", Label->Header.Token->Str, GetStringUntil(Parser, 100, TokenType_LineSeparator)));
+   if(!HasLabel && !Instruction) goto ret;
    
    Parser->Parent = Parent;
    return Statement;
    
    ret:
    Parser->Index = Index;
+   RemoveChild(Parent, -1);
+   Heap_FreeA(Statement);
    return NULL;
 }
 
@@ -714,7 +735,7 @@ AcceptSection(parser *Parser)
    Token = AcceptToken(Parser, TokenType_Identifier);
    if(!Token) Assembler_Log(Parser, Token, SyntaxErrorF, CFStringL("We expected an identifier after '.section', but found %s instead\n", Token->Str));
    
-   ast_section *Section = CreateASTSection(Token->Str, Parent);
+   ast_section *Section = CreateASTSection(Parent, Token);
    Parser->Parent = (vptr)Section;
    
    Token = AcceptToken(Parser, TokenType_LineSeparator);
@@ -736,10 +757,13 @@ ParseTokens(token *Tokens, hashmap *InstMap, string FileName)
 {
    b08 Found;
    
+   ast_node _NullNode;
    NullNode = &_NullNode;
-   NullNode->Prev = NullNode;
-   NullNode->Next = NullNode;
-   NullNode->FirstChild = NullNode;
+   _NullNode.Type = ASTType_Invalid;
+   _NullNode.ChildCount = 0;
+   _NullNode.Prev = NullNode;
+   _NullNode.Next = NullNode;
+   _NullNode.FirstChild = NullNode;
    
    parser Parser;
    Parser.Tokens = Tokens;
@@ -752,14 +776,24 @@ ParseTokens(token *Tokens, hashmap *InstMap, string FileName)
    Parser.Parent = (ast_node*)Parser.AST;
    
    ast_section *Section;
-   while(Section = AcceptSection(&Parser));
+   b08 HasSection = FALSE;
+   while(Section = AcceptSection(&Parser)) HasSection = TRUE;
    
-   if(Parser.Parent == (ast_node*)Parser.AST) {
-      Parser.Parent = (vptr)CreateASTSection(CLStringL("text"), (vptr)Parser.Parent);
+   if(!HasSection) {
+      //TODO Clean this up somehow
+      token *Token = Parser.DummySection = Heap_AllocateA(_Heap, sizeof(token));
+      Token->Str = CLStringL("text");
+      Token->Type = TokenType_Identifier;
+      Token->ColumnNumber = 0;
+      Token->LineNumber = 0;
+      
+      Parser.Parent = (vptr)CreateASTSection((vptr)Parser.Parent, Token);
       
       ast_statement *Statement;
       while(Statement = AcceptStatement(&Parser));
    }
+   
+   while(AcceptToken(&Parser, TokenType_LineSeparator));
    
    if(Parser.Index < Parser.TokenCount) {
       u32 Length = 0;
@@ -787,252 +821,5 @@ ParseTokens(token *Tokens, hashmap *InstMap, string FileName)
    
    return Parser;
 }
-
-/*
-internal heap_handle *
-ParseTokens(hashmap *InstMap, heap_handle *Tokens)
-{
-   heap_handle *Root = Heap_Allocate(_Heap, sizeof(ast_section));
-   heap_handle *RootChildren = Heap_Allocate(_Heap, 0);
-   ((ast_root*)Root->Data)->Header.Type = ASTType_Root;
-   ((ast_root*)Root->Data)->Children = RootChildren;
-   u32 RootChildrenCount = 0;
-   
-   u32 TokenCount = Tokens->Size / sizeof(token);
-   for(u32 I = 0; I < TokenCount; I++) {
-      token Token = ((token*)Tokens->Data)[I];
-      
-      switch(Token.Type) {
-         case TokenType_Invalid:
-            Assert(FALSE, "Invalid token!");
-            break;
-         
-         
-         case TokenType_LineSeparator:
-         case TokenType_Comment:
-            break;
-         
-         //TODO: Make these more robust
-         case TokenType_LabelSuffix:
-            Assert(FALSE, "Syntax error: Label suffix should not appear without a name!");
-            break;
-         
-         case TokenType_MacroPrefix:
-            Assert(FALSE, "Macros not implemented!");
-            break;
-         
-         case TokenType_ListSeparator:
-            Assert(FALSE, "Syntax error: Argument separators should only appear within an instruction or array!");
-            break;
-         
-         case TokenType_ArrayStart:
-         case TokenType_ArrayEnd:
-            Assert(FALSE, "Arrays not implemented!");
-            break;
-         
-         case TokenType_Operation:
-            Assert(FALSE, "Syntax error: Operations must apply to numbers (or something)");
-            break;
-         
-         case TokenType_Identifier: {
-            u32 J = I;
-            while((J = SkipComments(Tokens, J+1)) < TokenCount) {
-               token NextToken = ((token*)Tokens->Data)[J];
-               
-               if(NextToken.Type == TokenType_LineSeparator) break;
-               
-               if(TextToken.Type == TokenType_LabelSuffix) {
-                  heap_handle *Node = Heap_Allocate(_Heap, sizeof(ast_label));
-                  ((ast_label*)Node->Data)->Header.Type = ASTType_Label;
-                  ((ast_label*)Node->Data)->Name = Token.Str;
-                  
-                  Heap_Resize(RootChildren, RootChildrenCount * sizeof(heap_handle*));
-                  ((heap_handle**)RootChildren->Data)[RootChildrenCount] = Node;
-                  RootChildrenCount++;
-                  
-                  break;
-               }
-               
-               switch(NextToken.Type) {
-                  case TokenType_Identifier: {
-                     
-                  } break;
-                  
-               }
-            }
-            
-            I = J;
-            
-            
-            
-            
-            u32 J = SkipComments(Tokens, I+1);
-            
-            token NextToken;
-            if(J < TokenCount) {
-               NextToken = ((token*)Tokens->Data)[J];
-               
-               if(NextToken.Type == TokenType_LabelSuffix) {
-                  heap_handle *Node = Heap_Allocate(_Heap, sizeof(ast_label));
-                  ((ast_label*)Node->Data)->Header.Type = ASTType_Label;
-                  ((ast_label*)Node->Data)->Name = Token.Str;
-                  
-                  Heap_Resize(RootChildren, RootChildrenCount * sizeof(heap_handle*));
-                  ((heap_handle**)RootChildren->Data)[RootChildrenCount] = Node;
-                  RootChildrenCount++;
-                  
-                  I = J;
-                  break;
-               }
-            }
-            
-            instruction *InstPtr = HashMap_Get(InstMap, &Token.Str);
-            Assert(InstPtr);
-            instruction Inst = *InstPtr;
-            
-            heap_handle *Node = Heap_Allocate(_Heap, sizeof(ast_instruction));
-            ((ast_instruction*)Node->Data)->Header.Type = ASTType_Instruction;
-            ((ast_instruction*)Node->Data)->Instruction = Inst;
-            ((ast_instruction*)Node->Data)->Name = Token.Str;
-            
-            Heap_Resize(RootChildren, (RootChildrenCount+1) * sizeof(heap_handle*));
-            ((heap_handle**)RootChildren->Data)[RootChildrenCount] = Node;
-            RootChildrenCount++;
-            
-            switch(Inst.Fmt) {
-               case FMT_B1R0:
-               case FMT_B2R0:
-               case FMT_B1R0e:
-               case FMT_B2R0e: {
-                  Assert(J < TokenCount);
-                  
-                  heap_handle *ImmNode;
-                  if(NextToken.Type == TokenType_Identifier) {
-                     ImmNode = Heap_Allocate(_Heap, sizeof(ast_label_reference));
-                     ((ast_label_reference*)ImmNode->Data)->Header.Type = ASTType_LabelReference;
-                     ((ast_label_reference*)ImmNode->Data)->Name = NextToken.Str;
-                  } else {
-                     Assert(NextToken.Type == TokenType_Number);
-                     
-                     u08 Radix = 10;
-                     if(J+1 < TokenCount) {
-                        token RadixToken = ((token*)Tokens->Data)[J+1];
-                        if(RadixToken.Type == TokenType_Radix) {
-                           Radix = ParseRadix(RadixToken.Str);
-                           J++;
-                        }
-                     }
-                     
-                     ImmNode = Heap_Allocate(_Heap, sizeof(ast_immediate));
-                     ((ast_immediate*)ImmNode->Data)->Header.Type = ASTType_Immediate;
-                     ((ast_immediate*)ImmNode->Data)->Value = ParseImmediate(NextToken.Str, Radix);
-                  }
-                  
-                  heap_handle *InstChildren = Heap_Allocate(_Heap, sizeof(heap_handle*));
-                  ((heap_handle**)InstChildren->Data)[0] = ImmNode;
-                  
-                  ((ast_instruction*)Node->Data)->Children = InstChildren;
-                  
-                  I = J;
-               } break;
-               
-               case FMT_B1R1:
-               case FMT_B2R1f: {
-                  Assert(J < TokenCount);
-                  Assert(NextToken.Type == TokenType_Identifier);
-                  
-                  heap_handle *RegNode = Heap_Allocate(_Heap, sizeof(ast_register));
-                  ((ast_register*)RegNode->Data)->Header.Type = ASTType_Register;
-                  ((ast_register*)RegNode->Data)->Value = ParseRegister(NextToken.Str);
-                  
-                  heap_handle *InstChildren = Heap_Allocate(_Heap, sizeof(heap_handle*));
-                  ((heap_handle**)InstChildren->Data)[0] = RegNode;
-                  
-                  ((ast_instruction*)Node->Data)->Children = InstChildren;
-                  
-                  I = J;
-               } break;
-               
-               case FMT_B2R1: {
-                  Assert(J+1 < TokenCount);
-                  J = SkipComments(Tokens, J+1);
-                  Assert(J < TokenCount);
-                  token NextToken1 = ((token*)Tokens->Data)[J];
-                  
-                  Assert(NextToken.Type == TokenType_Identifier);
-                  heap_handle *RegNode = Heap_Allocate(_Heap, sizeof(ast_register));
-                  ((ast_register*)RegNode->Data)->Header.Type = ASTType_Register;
-                  ((ast_register*)RegNode->Data)->Value = ParseRegister(NextToken.Str);
-                  
-                  heap_handle *ImmNode;
-                  if(NextToken.Type == TokenType_Identifier) {
-                     ImmNode = Heap_Allocate(_Heap, sizeof(ast_label_reference));
-                     ((ast_label_reference*)ImmNode->Data)->Header.Type = ASTType_LabelReference;
-                     ((ast_label_reference*)ImmNode->Data)->Name = NextToken1.Str;
-                  } else {
-                     Assert(NextToken.Type == TokenType_Number);
-                     
-                     u08 Radix = 10;
-                     if(J+1 < TokenCount) {
-                        token RadixToken = ((token*)Tokens->Data)[J];
-                        if(RadixToken.Type == TokenType_Radix) {
-                           Radix = ParseRadix(RadixToken.Str);
-                           J++;
-                        }
-                     }
-                     
-                     ImmNode = Heap_Allocate(_Heap, sizeof(ast_immediate));
-                     ((ast_immediate*)ImmNode->Data)->Header.Type = ASTType_Immediate;
-                     ((ast_immediate*)ImmNode->Data)->Value = ParseImmediate(NextToken1.Str, Radix);
-                  }
-                  
-                  heap_handle *InstChildren = Heap_Allocate(_Heap, 2*sizeof(heap_handle*));
-                  ((heap_handle**)InstChildren->Data)[0] = RegNode;
-                  ((heap_handle**)InstChildren->Data)[1] = ImmNode;
-                  
-                  ((ast_instruction*)Node->Data)->Children = InstChildren;
-                  
-                  I = J;
-               } break;
-               
-               case FMT_B2R2: {
-                  Assert(NextToken.Type == TokenType_Identifier);
-                  
-                  J = SkipComments(Tokens, J+1);
-                  Assert(J < TokenCount);
-                  token SepTok = ((token*)Tokens->Data)[J];
-                  Assert(SepTok.Type == TokenType_ListSeparator);
-                  
-                  J = SkipComments(Tokens, J+1);
-                  Assert(J < TokenCount);
-                  token NextToken1 = ((token*)Tokens->Data)[J];
-                  Assert(NextToken1.Type == TokenType_Identifier);
-                  
-                  heap_handle *RegNode0 = Heap_Allocate(_Heap, sizeof(ast_register));
-                  ((ast_register*)RegNode0->Data)->Header.Type = ASTType_Register;
-                  ((ast_register*)RegNode0->Data)->Value = ParseRegister(NextToken.Str);
-                  
-                  heap_handle *RegNode1 = Heap_Allocate(_Heap, sizeof(ast_register));
-                  ((ast_register*)RegNode1->Data)->Header.Type = ASTType_Register;
-                  ((ast_register*)RegNode1->Data)->Value = ParseRegister(NextToken1.Str);
-                  
-                  heap_handle *InstChildren = Heap_Allocate(_Heap, 2*sizeof(heap_handle*));
-                  ((heap_handle**)InstChildren->Data)[0] = RegNode0;
-                  ((heap_handle**)InstChildren->Data)[1] = RegNode1;
-                  
-                  ((ast_instruction*)Node->Data)->Children = InstChildren;
-                  
-                  I = J;
-               } break;
-            }
-         } break;
-         
-         default: Assert(FALSE, "Unknown token type!");
-      }
-   }
-   
-   return Root;
-}
-*/
 
 #endif

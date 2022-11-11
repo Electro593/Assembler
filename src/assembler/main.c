@@ -77,7 +77,7 @@ typedef enum instruction_fmt {
    FMT_B2R2  = 0b111,
 } instruction_fmt;
 
-   //    Name     Opcode     Fmt        Fn   Size  OpN   Mod   Op1   Op2   Op3
+   //    Name                   Opcode     Fmt        Fn   Size  OpN   Mod   Op1   Op2   Op3
 #define INSTRUCTIONS \
    INST("and",   InstType_Text, 0b00000, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
    INST("slt",   InstType_Text, 0b10000, FMT_B1R1,  0b0000, 0b0, 0b01, 0b00, 0b01, 0b00, 0b00) \
@@ -105,11 +105,14 @@ typedef enum instruction_fmt {
    INST("srai",  InstType_Text, 0b11101, FMT_B1R0,  0b0000, 0b0, 0b00, 0b00, 0b10, 0b00, 0b00) \
    INST("addi",  InstType_Text,  0b0011, FMT_B1R0e, 0b0000, 0b0, 0b00, 0b01, 0b10, 0b00, 0b00) \
    INST("lui",   InstType_Text,  0b1011, FMT_B2R0e, 0b0000, 0b1, 0b00, 0b01, 0b10, 0b00, 0b00) \
-   INST("push",  InstType_Text, 0b00000, FMT_B2R1f, 0b0000, 0b1, 0b01, 0b10, 0b00, 0b00, 0b00) \
-   INST("pop",   InstType_Text, 0b00000, FMT_B2R1f, 0b0001, 0b1, 0b01, 0b10, 0b00, 0b00, 0b00) \
+   INST("push",  InstType_Text, 0b00000, FMT_B2R1f, 0b1110, 0b1, 0b01, 0b10, 0b00, 0b00, 0b00) \
+   INST("pop",   InstType_Text, 0b00000, FMT_B2R1f, 0b0010, 0b1, 0b01, 0b10, 0b00, 0b00, 0b00) \
+   INST("setsp", InstType_Text, 0b00000, FMT_B2R1f, 0b0000, 0b1, 0b01, 0b10, 0b00, 0b00, 0b00) \
    INST("addsp", InstType_Text, 0b00100, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b00, 0b00, 0b00) \
    INST("ssp",   InstType_Text, 0b01000, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
    INST("lsp",   InstType_Text, 0b01100, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("spc",   InstType_Text, 0b11000, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
+   INST("lpc",   InstType_Text, 0b11100, FMT_B2R0,  0b0000, 0b1, 0b00, 0b00, 0b10, 0b00, 0b00) \
    INST("sm",    InstType_Text, 0b10000, FMT_B2R2,  0b0000, 0b1, 0b10, 0b00, 0b01, 0b01, 0b00) \
    INST("lm",    InstType_Text, 0b10100, FMT_B2R2,  0b0000, 0b1, 0b10, 0b00, 0b01, 0b01, 0b00) \
    INST("swp",   InstType_Text, 0b01001, FMT_B2R2,  0b0000, 0b1, 0b10, 0b00, 0b01, 0b01, 0b00) \
@@ -142,7 +145,7 @@ typedef struct instmap_entry {
 #define INCLUDE_SOURCE
    #include <assembler/lexer.c>
    #include <assembler/parser.c>
-   // #include <assembler/generator.c>
+   #include <assembler/generator.c>
 #undef INCLUDE_SOURCE
 
 internal u64
@@ -317,35 +320,31 @@ Assembler_Load(platform_state *Platform, assembler_module *Module)
    }
    
    if(!AsmFileName.Text) return;
-   AsmFileName = String_Terminate(AsmFileName);
+   string AsmFileNameT = String_Terminate(AsmFileName);
    
-   if(!AsmFileNoExt.Text) AsmFileNoExt = AsmFileName;
+   if(!AsmFileNoExt.Text) AsmFileNoExt = AsmFileNameT;
    else AsmFileNoExt = String_Terminate(AsmFileNoExt);
    
    if(!ObjFileName.Text) ObjFileName = String_Cat(AsmFileNoExt, CString(".o"));
    else ObjFileName = String_Terminate(ObjFileName);
    
    file_handle File;
-   Platform_OpenFile(&File, AsmFileName.Text, FILE_READ);
+   Platform_OpenFile(&File, AsmFileNameT.Text, FILE_READ);
    u64 FileLen = Platform_GetFileLength(File);
    c08 *FileData = Heap_AllocateA(_Heap, FileLen+1);
    string FileStr = CLString(FileData, FileLen);
    Platform_ReadFile(File, FileData, FileLen, 0);
+   Platform_CloseFile(File);
    FileData[FileLen] = 0;
    
-   hashmap LabelMap = HashMap_Init(_Heap, sizeof(string), sizeof(u16), 13, 2, 0.5, (hash_func*)&Assembler_LabelHash, (cmp_func*)&_String_Cmp, NULL);
+   hashmap LabelMap = HashMap_Init(_Heap, sizeof(string), sizeof(u64), 13, 2, 0.5, (hash_func*)&Assembler_LabelHash, (cmp_func*)&_String_Cmp, NULL);
    
    token *Tokens = TokenizeFile(FileStr);
    parser Parser = ParseTokens(Tokens, &_InstMap, AsmFileName);
-   // heap_handle *AST = ParseTokens(&_InstMap, Tokens);
-   // u08 *Output = GenerateASM(AST, &LabelMap);
-   u08 *Output = NULL;
+   heap_handle *Output = GenerateASM((ast_node*)Parser.AST, &LabelMap);
    
-   heap_handle *OutputHandle = Heap_GetHandleA(Output);
-   
-   Platform_CloseFile(File);
    Platform_OpenFile(&File, ObjFileName.Text, FILE_WRITE);
-   Platform_WriteFile(File, OutputHandle->Data, OutputHandle->Size, 0);
+   Platform_WriteFile(File, Output->Data, Output->Size, 0);
    Platform_CloseFile(File);
    #else
 
@@ -358,7 +357,7 @@ Assembler_Load(platform_state *Platform, assembler_module *Module)
    instruction Inst;
    #define INST(Name, Type, Opcode, Fmt, Fn, Size, OpN, Mod, Op1, Op2, Op3) \
       NameStr = CString(Name); \
-      Inst = (instruction){Opcode, Fn, Fmt, Size}; \
+      Inst = (instruction){Type, Opcode, Fn, Fmt, Size}; \
       HashMap_Add(&Map, &NameStr, &Inst);
    INSTRUCTIONS
    #undef INST

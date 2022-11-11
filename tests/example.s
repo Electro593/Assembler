@@ -1,50 +1,75 @@
-gcd:
-  sac  a0
-  bnez gcd_Loop
-  sac  a1
-  lac  a0
-  jalr ra
-gcd_Loop:
-  sac  a1
-  bez  gcd_End
-  slt  a0
-  bez  gdc_DecB
-  sac  a0
-  sub  a1
-  swp  a0, zro
-  bez  gcd_Loop
-gcd_DecB:
-  sac  a1
-  sub  a0
-  swp  a1, zro
-  bez  gcd_Loop
-gdc_End:
-  jalr ra
+.section text
+   # First, load in the stack pointer, then set the stack pointer to that value.
+   lui   C00`16
+   lac   a0
+   setsp a0
+   
+   saci  0
+   addi  C`16   # Add in the lower part of the address
+   lac   a0     # Load address of input into a0
+   jal   22`16  # Run relPrime
+   lm    a0, a0 # Load the value at address a0 into a0, or load the input
+   jal   3C`16  # After running the program, jump over it
 
+gcd: # 14
+   sac   a0
+   bnez  gcd_Loop # 21 - 15 = 6
+   addi  0
+   sac   a1
+   jalr  ra
+   lac   a0
 
-relPrime:
-  push ra
-  push s0
-  push s1
-  saci 2
-  swp  s1, a0
-  lac  s0
-relPrime_Loop:
-  sac  s1
-  swp  a1, s0
-  lac  a0
-  jal  gcd
-  addi -1
-  bez  relPrime_End
-  sac  s1
-  addi 1
-  lac  s1
-  jal  relPrime_Loop
-relPrime_End:
-  sac  s1
-  lac  a0
-  pop  s1
-  pop  s0
-  pop  ra
-  jalr ra
+gcd_Loop: # 21
+   sac   a1
+   bez   gcd_End # 40 - 22 = 18
+   addi  0
+   slt   a0
+   bez   gcd_DecB # 34 - 26 = 8
+   sac   a0
+   sub   a1
+   jal   gcd_Loop # 21 - 30 = -9
+   swp   a0, zro
 
+gcd_DecB: # 34
+   sac   a1
+   sub   a0
+   jal   gcd_Loop # 21 - 36 = -15
+   swp   a1, zro
+
+gcd_End: # 40
+   jalr  ra
+   addi  0
+
+relPrime: # 42
+   push  ra
+   push  s0
+   push  s1
+   saci  2
+   swp   a1, s0
+   lac   s0
+
+relPrime_Loop: # 52
+   sac   s1
+   swp   a1, s0
+   lac   a0
+   jal   gcd # 14 - 56 = -42
+   sac   a0
+   addi -1
+   bez   relPrime_End # 66 - 60 = 6
+   sac   s1
+   addi  1
+   jal   relPrime_Loop # 52 - 64 = -12
+   lac   s1
+
+relPrime_End: # 66
+   pop   s1
+   pop   s0
+   pop   ra
+   jalr  ra
+   lac   a0
+
+End: # 74
+   saci  0
+   addi  E`16
+   lac   s0
+   sm    s0, a0

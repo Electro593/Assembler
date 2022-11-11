@@ -218,10 +218,12 @@ TokenizeFile(string Source)
    
    c08 *C = Source.Text;
    c08 *End = C + Source.Length;
+   u32 LineNumber = 1;
+   c08 *LineStart = C;
    while(C < End) {
       SkipWhitespace(&C);
       
-      u32 TokensSize = Heap_GetHandleA(Tokens)->Size;
+      u32 TokensSize = Heap_GetHandleA(Tokens)->Size - sizeof(heap_handle*);
       if(TokensSize <= TokenCount*sizeof(token)) {
          Heap_ResizeA(&Tokens, TokensSize + 512*sizeof(token));
          Mem_Set(Tokens+TokenCount, 0, 512*sizeof(token));
@@ -230,6 +232,8 @@ TokenizeFile(string Source)
       token Token;
       Token.Str.Text = C;
       Token.Str.Resizable = FALSE;
+      Token.LineNumber = LineNumber;
+      Token.ColumnNumber = (u64)C - (u64)LineStart + 1;
       
       if(*C == '#') {
          if(*(C+1) == '*') {
@@ -239,6 +243,9 @@ TokenizeFile(string Source)
                if(*C == '#') {
                   if(*(C-1) == '*') CommentLevel--;
                   else if(*(C+1) == '*') CommentLevel++;
+               } else if(*C == '\n') {
+                  LineNumber++;
+                  LineStart = C+1;
                }
                C++;
             }
@@ -246,10 +253,6 @@ TokenizeFile(string Source)
          } else {
             while(*C && *C != '\n') C++;
          }
-         
-         // Token.Str.Length = (u64)C - (u64)Token.Str.Text;
-         // Token.Str.Capacity = Token.Str.Length;
-         // Token.Type = TokenType_Comment;
          continue;
       } else if(*C == '_' || IsAlphabetical(*C) || IsNumeric(*C)) {
          b08 IsNumber = IsNumeric(*C);
@@ -294,6 +297,12 @@ TokenizeFile(string Source)
       } else if(*C == ';' || *C == '\n') {
          Token.Str.Length = 1;
          Token.Type = TokenType_LineSeparator;
+         
+         if(*C == '\n') {
+            LineNumber++;
+            LineStart = C+1;
+         }
+         
          C++;
       } else if(*C == '\\') {
          C++;
@@ -422,7 +431,16 @@ TokenizeFile(string Source)
       Tokens[TokenCount++] = Token;
    }
    
-   Heap_ResizeA(&Tokens, TokenCount*sizeof(token));
+   Heap_ResizeA(&Tokens, (TokenCount+1)*sizeof(token));
+   
+   token Token;
+   Token.Str.Text = NULL;
+   Token.Str.Resizable = FALSE;
+   Token.Str.Length = 1;
+   Token.Str.Capacity = 1;
+   Token.Type = TokenType_LineSeparator;
+   Tokens[TokenCount++] = Token;
+   
    return Tokens;
 }
 

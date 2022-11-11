@@ -729,7 +729,7 @@ String_Cat(string A, string B)
 {
     string Result = LString(A.Length + B.Length);
     
-    Mem_Cpy(Result.Text,          A.Text, A.Length);
+    Mem_Cpy(Result.Text, A.Text, A.Length);
     Mem_Cpy(Result.Text+A.Length, B.Text, B.Length);
     
     return Result;
@@ -742,7 +742,7 @@ String_Terminate(string A)
     
     string Result = LString(A.Length + 1);
     
-    Mem_Cpy(Result.Text,          A.Text, A.Length);
+    Mem_Cpy(Result.Text, A.Text, A.Length);
     Result.Text[A.Length] = 0;
     
     return Result;

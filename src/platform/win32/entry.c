@@ -351,6 +351,13 @@ Platform_WriteError(string Message, u32 Exit)
 {
     win32_handle Handle = Win32_GetStdHandle(STD_ERROR_HANDLE);
     Win32_WriteConsoleA(Handle, Message.Text, Message.Length, NULL, NULL);
+    
+    c08 *StringCopy = Platform_AllocateMemory(Message.Length+1);
+    Mem_Cpy(StringCopy, Message.Text, Message.Length);
+    StringCopy[Message.Length] = 0;
+    Win32_OutputDebugStringA(StringCopy);
+    Platform_FreeMemory(StringCopy);
+    
     if(Exit) Win32_ExitProcess(Exit);
 }
 

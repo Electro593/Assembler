@@ -16,29 +16,43 @@
 #ifdef INCLUDE_SOURCE
 
 internal b08
-GetImmediate(hashmap *LabelMap, heap_handle *Yielded,
-             heap_handle *Inst, heap_handle *Imm, u16 PC, u16 InstSize,
-             s16 *ValueOut)
+GetImmediate(hashmap *LabelMap, ast_node *Imm, u64 FileLoc, s64 *ValueOut)
 {
-   ast_node_type Type = ((ast_node*)Imm->Data)->Type;
-   
-   if(Type == ASTType_Immediate) {
-      *ValueOut = ((ast_immediate*)Imm->Data)->Value;
-   } else {
-      Assert(Type == ASTType_LabelReference);
-      string Name = ((ast_label_reference*)Imm->Data)->Name;
+   switch(Imm->Type) {
+      case ASTType_Immediate: {
+         *ValueOut = ((ast_immediate*)Imm)->Value;
+      } break;
       
-      u16 *Label = HashMap_Get(LabelMap, &Name);
-      if(Label) {
-         *ValueOut = PC + InstSize - *Label;
-      } else {
-         u64 YieldedSize = Yielded->Size;
-         Heap_Resize(Yielded, YieldedSize + sizeof(heap_handle*) + sizeof(u16));
-         heap_handle **YieldedInst = (vptr)((u08*)Yielded->Data + YieldedSize);
-         u16 *YieldedPC = (vptr)((u08*)Yielded->Data + YieldedSize + sizeof(heap_handle*));
-         *YieldedInst = Inst;
-         *YieldedPC   = (u16)PC;
-         return FALSE;
+      case ASTType_Identifier: {
+         u64 *Label = HashMap_Get(LabelMap, &Imm->Token->Str);
+         if(Label) {
+            *ValueOut = (s64)*Label - (s64)FileLoc;
+         } else {
+            return FALSE;
+         }
+      } break;
+      
+      case ASTType_Operation: {
+         //TODO: Make this iterative
+         
+         ast_operation *Op = (vptr)Imm;
+         
+         s64 ValueA = 0;
+         s64 ValueB = 0;
+         
+         if(Imm->Token->Type == TokenType_Subtraction && Op->OperatorIndex == 0) {
+            if(!GetImmediate(LabelMap, Imm->FirstChild, FileLoc, &ValueB))
+               return FALSE;
+            
+            *ValueOut = ValueA - ValueB;
+         } else {
+            Assert(FALSE, "Unsupported operator.");
+         }
+         
+      } break;
+      
+      default: {
+         Assert(FALSE, "Immediates must be numbers or labels.");
       }
    }
    
@@ -46,163 +60,165 @@ GetImmediate(hashmap *LabelMap, heap_handle *Yielded,
 }
 
 internal void
-GenerateInstruction_B1R0(hashmap *LabelMap, heap_handle *Yielded, heap_handle *Node, instruction Inst, heap_handle *Children, u64 *PC, heap_handle *Output)
+GetRegister(ast_node *Reg, u08 *ValueOut)
 {
-   Assert(Inst.Size == 0 && Inst.Fmt == FMT_B1R0);
-   Assert(!Children->Free && Children->Size == sizeof(heap_handle*));
+   switch(Reg->Type) {
+      case ASTType_Identifier: {
+         *ValueOut = ParseRegister(Reg->Token->Str);
+      } break;
+      
+      default: {
+         Assert(FALSE, "Registers must be identifiers.");
+      }
+   }
+}
+
+internal void
+YieldInstruction(heap_handle *Yielded, ast_instruction *Inst, u64 FileLoc)
+{
+   u64 YieldedSize = Yielded->Size;
+   Heap_Resize(Yielded, YieldedSize + sizeof(ast_instruction*) + sizeof(u64));
    
-   heap_handle *Operand = ((heap_handle**)Children->Data)[0];
+   ast_instruction **YieldedInst = (vptr)((u08*)Yielded->Data + YieldedSize);
+   u64 *YieldedFileLoc = (vptr)(YieldedInst+1);
    
-   s16 Value;
-   b08 Success = GetImmediate(LabelMap, Yielded, Node, Operand, *PC, 1, &Value);
+   *YieldedInst    = Inst;
+   *YieldedFileLoc = FileLoc;
+}
+
+internal void
+GenerateInstruction_B1R0(hashmap *LabelMap, heap_handle *Yielded,
+                         ast_instruction *Inst, u64 *FileLoc, heap_handle *Output)
+{
+   instruction InstData = Inst->Instruction;
    
-   if(Success) {
-      Assert(-4 <= Value && Value <= 3);
-      ((u08*)Output->Data)[*PC+0] = (Value << 5) | Inst.Opcode;
+   Assert(InstData.Size == 0 && InstData.Fmt == FMT_B1R0);
+   Assert(Inst->Header.ChildCount == 1);
+   
+   s64 Imm;
+   if(!GetImmediate(LabelMap, Inst->Header.FirstChild, *FileLoc, &Imm)) {
+      YieldInstruction(Yielded, Inst, *FileLoc);
+   } else {
+      Assert((-4 <= Imm && Imm <= 3) || (0 <= Imm && Imm <= 7), "1-Byte immediates must be between -4 and 3, inclusive.");
+      ((u08*)Output->Data)[*FileLoc+0] = (Imm << 5) | InstData.Opcode;
    }
    
-   *PC += 1;
+   *FileLoc += 1;
 }
 
 internal void
-GenerateInstruction_B1R0e(hashmap *LabelMap, heap_handle *Yielded, heap_handle *Node, instruction Inst, heap_handle *Children, u64 *PC, heap_handle *Output)
+GenerateInstruction_B1R0e(hashmap *LabelMap, heap_handle *Yielded,
+                          ast_instruction *Inst, u64 *FileLoc, heap_handle *Output)
 {
-   Assert(Inst.Size == 0 && Inst.Fmt == FMT_B1R0e);
-   Assert(!Children->Free && Children->Size == sizeof(heap_handle*));
+   instruction InstData = Inst->Instruction;
    
-   heap_handle *Operand = ((heap_handle**)Children->Data)[0];
+   Assert(InstData.Size == 0 && InstData.Fmt == FMT_B1R0e);
+   Assert(Inst->Header.ChildCount == 1);
    
-   s16 Value;
-   b08 Success = GetImmediate(LabelMap, Yielded, Node, Operand, *PC, 1, &Value);
-   
-   if(Success) {
-      Assert(-8 <= Value && Value <= 7);
-      ((u08*)Output->Data)[*PC+0] = (Value << 4) | (Inst.Opcode & 0xF);
+   s64 Imm;
+   if(!GetImmediate(LabelMap, Inst->Header.FirstChild, *FileLoc, &Imm)) {
+      YieldInstruction(Yielded, Inst, *FileLoc);
+   } else {
+      Assert((-8 <= Imm && Imm <= 7) || (0 <= Imm && Imm <= 15), "1-Byte extended immediates must be between -8 and 7, inclusive.");
+      ((u08*)Output->Data)[*FileLoc+0] = (Imm << 4) | (InstData.Opcode & 0xF);
    }
    
-   *PC += 1;
+   *FileLoc += 1;
 }
 
 internal void
-GenerateInstruction_B1R1(hashmap *LabelMap, heap_handle *Yielded, heap_handle *Node, instruction Inst, heap_handle *Children, u64 *PC, heap_handle *Output)
+GenerateInstruction_B1R1(ast_instruction *Inst, u64 *FileLoc, heap_handle *Output)
 {
-   Assert(Inst.Size == 0 && Inst.Fmt == FMT_B1R1);
-   Assert(!Children->Free && Children->Size == sizeof(heap_handle*));
+   instruction InstData = Inst->Instruction;
    
-   heap_handle *Operand = ((heap_handle**)Children->Data)[0];
-   Assert(((ast_node*)Operand->Data)->Type == ASTType_Register);
+   Assert(InstData.Size == 0 && InstData.Fmt == FMT_B1R1);
+   Assert(Inst->Header.ChildCount == 1);
    
-   u08 Value = ((ast_register*)Operand->Data)->Value;
-   Assert(Value < 8);
+   u08 Reg;
+   GetRegister(Inst->Header.FirstChild, &Reg);
+   ((u08*)Output->Data)[*FileLoc+0] = (Reg << 5) | InstData.Opcode;
    
-   ((u08*)Output->Data)[*PC+0] = (Value << 5) | Inst.Opcode;
-   *PC += 1;
+   *FileLoc += 1;
 }
 
 internal void
-GenerateInstruction_B2R0(hashmap *LabelMap, heap_handle *Yielded, heap_handle *Node, instruction Inst, heap_handle *Children, u64 *PC, heap_handle *Output)
+GenerateInstruction_B2R0(hashmap *LabelMap, heap_handle *Yielded,
+                         ast_instruction *Inst, u64 *FileLoc, heap_handle *Output)
 {
-   Assert(Inst.Size == 1 && Inst.Fmt == FMT_B2R0);
-   Assert(!Children->Free && Children->Size == sizeof(heap_handle*));
+   instruction InstData = Inst->Instruction;
    
-   heap_handle *Operand = ((heap_handle**)Children->Data)[0];
+   Assert(InstData.Size == 1 && InstData.Fmt == FMT_B2R0);
+   Assert(Inst->Header.ChildCount == 1);
    
-   s16 Value;
-   b08 Success = GetImmediate(LabelMap, Yielded, Node, Operand, *PC, 2, &Value);
-   
-   if(Success) {
-      Assert(-128 <= Value && Value <= 127);
-      ((u08*)Output->Data)[*PC+0] = ((Value & 0x7) << 5) | ((Inst.Opcode & 0x3) << 3) | 0b111;
-      ((u08*)Output->Data)[*PC+1] = ((Inst.Opcode & 0x1C) << 3) | (Value >> 3);
+   s64 Imm;
+   if(!GetImmediate(LabelMap, Inst->Header.FirstChild, *FileLoc, &Imm)) {
+      YieldInstruction(Yielded, Inst, *FileLoc);
+   } else {
+      Assert((-128 <= Imm && Imm <= 127) || (0 <= Imm && Imm <= 255), "2-Byte large immediates must be between -128 and 127, inclusive.");
+      ((u08*)Output->Data)[*FileLoc+0] = ((Imm & 0x7) << 5) | ((InstData.Opcode & 0x3) << 3) | 0b111;
+      ((u08*)Output->Data)[*FileLoc+1] = ((InstData.Opcode & 0x1C) << 3) | ((Imm & 0xF8) >> 3);
    }
    
-   *PC += 2;
+   *FileLoc += 2;
 }
 
 internal void
-GenerateInstruction_B2R0e(hashmap *LabelMap, heap_handle *Yielded, heap_handle *Node, instruction Inst, heap_handle *Children, u64 *PC, heap_handle *Output)
+GenerateInstruction_B2R0e(hashmap *LabelMap, heap_handle *Yielded,
+                          ast_instruction *Inst, u64 *FileLoc, heap_handle *Output)
 {
-   Assert(Inst.Size == 1 && Inst.Fmt == FMT_B2R0e);
-   Assert(!Children->Free && Children->Size == sizeof(heap_handle*));
+   instruction InstData = Inst->Instruction;
    
-   heap_handle *Operand = ((heap_handle**)Children->Data)[0];
+   Assert(InstData.Size == 1 && InstData.Fmt == FMT_B2R0e);
+   Assert(Inst->Header.ChildCount == 1);
    
-   s16 Value;
-   b08 Success = GetImmediate(LabelMap, Yielded, Node, Operand, *PC, 2, &Value);
-   
-   if(Success) {
-      Assert(-2048 <= Value && Value <= 2047);
-      ((u08*)Output->Data)[*PC+0] = ((Value & 0xF) << 4) | (Inst.Opcode & 0xF);
-      ((u08*)Output->Data)[*PC+1] = Value >> 4;
+   s64 Imm;
+   if(!GetImmediate(LabelMap, Inst->Header.FirstChild, *FileLoc, &Imm)) {
+      YieldInstruction(Yielded, Inst, *FileLoc);
+   } else {
+      Assert((-2048 <= Imm && Imm <= 2047) || (0 <= Imm && Imm <= 4095), "2-Byte extended immediates must be between -2048 and 2047, inclusive.");
+      ((u08*)Output->Data)[*FileLoc+0] = ((Imm & 0xF) << 4) | (InstData.Opcode & 0xF);
+      ((u08*)Output->Data)[*FileLoc+1] = Imm >> 4;
    }
    
-   *PC += 2;
+   *FileLoc += 2;
 }
 
 internal void
-GenerateInstruction_B2R1(hashmap *LabelMap, heap_handle *Yielded, heap_handle *Node, instruction Inst, heap_handle *Children, u64 *PC, heap_handle *Output)
+GenerateInstruction_B2R1f(ast_instruction *Inst, u64 *FileLoc, heap_handle *Output)
 {
-   Assert(Inst.Size == 1 && Inst.Fmt == FMT_B2R1);
-   Assert(!Children->Free && Children->Size == 2*sizeof(heap_handle*));
+   instruction InstData = Inst->Instruction;
    
-   heap_handle *Operand0 = ((heap_handle**)Children->Data)[0];
-   Assert(((ast_node*)Operand0->Data)->Type == ASTType_Register);
-   u08 Reg = ((ast_register*)Operand0->Data)->Value;
-   Assert(Reg < 16);
+   Assert(InstData.Size == 1 && InstData.Fmt == FMT_B2R1f);
+   Assert(Inst->Header.ChildCount == 1);
    
-   s16 Imm;
-   heap_handle *Operand1 = ((heap_handle**)Children->Data)[1];
-   b08 Success = GetImmediate(LabelMap, Yielded, Node, Operand1, *PC, 2, &Imm);
+   u08 Reg;
+   GetRegister(Inst->Header.FirstChild, &Reg);
+   ((u08*)Output->Data)[*FileLoc+0] = ((InstData.Fn & 0x7) << 5) | ((InstData.Opcode & 0x3) << 3) | 0b111;
+   ((u08*)Output->Data)[*FileLoc+1] = ((InstData.Opcode & 0x1C) << 3) | (Reg << 1) | (InstData.Fn >> 3);
    
-   if(Success) {
-      Assert(-8 <= Imm && Imm <= 7);
-      ((u08*)Output->Data)[*PC+0] = ((Imm & 0x7) << 5) | ((Inst.Opcode & 0x3) << 3) | 0b111;
-      ((u08*)Output->Data)[*PC+1] = ((Inst.Opcode & 0x1C) << 3) | (Reg << 1) | (Imm >> 3);
-   }
-   
-   *PC += 2;
+   *FileLoc += 2;
 }
 
 internal void
-GenerateInstruction_B2R1f(hashmap *LabelMap, heap_handle *Yielded, heap_handle *Node, instruction Inst, heap_handle *Children, u64 *PC, heap_handle *Output)
+GenerateInstruction_B2R2(ast_instruction *Inst, u64 *FileLoc, heap_handle *Output)
 {
-   Assert(Inst.Size == 1 && Inst.Fmt == FMT_B2R1f);
-   Assert(!Children->Free && Children->Size == sizeof(heap_handle*));
+   instruction InstData = Inst->Instruction;
    
-   heap_handle *Operand = ((heap_handle**)Children->Data)[0];
-   Assert(((ast_node*)Operand->Data)->Type == ASTType_Register);
+   Assert(InstData.Size == 1 && InstData.Fmt == FMT_B2R2);
+   Assert(Inst->Header.ChildCount == 2);
    
-   u08 Value = ((ast_register*)Operand->Data)->Value;
-   Assert(Value < 16);
+   u08 RegA;
+   u08 RegB;
+   GetRegister(Inst->Header.FirstChild, &RegA);
+   GetRegister(Inst->Header.FirstChild->Next, &RegB);
+   ((u08*)Output->Data)[*FileLoc+0] = ((RegB & 0x7) << 5) | ((InstData.Opcode & 0x3) << 3) | 0b111;
+   ((u08*)Output->Data)[*FileLoc+1] = ((InstData.Opcode & 0x1C) << 3) | (RegA << 1) | (RegB >> 3);
    
-   ((u08*)Output->Data)[*PC+0] = ((Inst.Fn & 0x7) << 5) | ((Inst.Opcode & 0x3) << 3) | 0b111;
-   ((u08*)Output->Data)[*PC+1] = ((Inst.Opcode & 0x1C) << 3) | (Value << 1) | (Inst.Fn >> 3);
-   *PC += 2;
-}
-
-internal void
-GenerateInstruction_B2R2(hashmap *LabelMap, heap_handle *Yielded, heap_handle *Node, instruction Inst, heap_handle *Children, u64 *PC, heap_handle *Output)
-{
-   Assert(Inst.Size == 1 && Inst.Fmt == FMT_B2R2);
-   Assert(!Children->Free && Children->Size == 2*sizeof(heap_handle*));
-   
-   heap_handle *Operand0 = ((heap_handle**)Children->Data)[0];
-   Assert(((ast_node*)Operand0->Data)->Type == ASTType_Register);
-   u08 Reg0 = ((ast_register*)Operand0->Data)->Value;
-   Assert(Reg0 < 16);
-   
-   heap_handle *Operand1 = ((heap_handle**)Children->Data)[1];
-   Assert(((ast_node*)Operand1->Data)->Type == ASTType_Register);
-   u08 Reg1 = ((ast_register*)Operand1->Data)->Value;
-   Assert(Reg1 < 16);
-   
-   ((u08*)Output->Data)[*PC+0] = ((Reg1 & 0x7) << 5) | ((Inst.Opcode & 0x3) << 3) | 0b111;
-   ((u08*)Output->Data)[*PC+1] = ((Inst.Opcode & 0x1C) << 3) | (Reg0 << 1) | (Reg1 >> 3);
-   *PC += 2;
+   *FileLoc += 2;
 }
 
 internal heap_handle *
-GenerateASM(heap_handle *AST, hashmap *LabelMap)
+GenerateASM(ast_node *AST, hashmap *LabelMap)
 {
    u64 FileInc = 512;
    u64 FileSize = 0;
@@ -211,75 +227,65 @@ GenerateASM(heap_handle *AST, hashmap *LabelMap)
    heap_handle *Yielded = Heap_Allocate(_Heap, 0);
    
    vptr StackStart = Stack_GetCursor();
+   ast_node **Cursor = StackStart;
+   *Cursor++ = AST;
    
-   Stack_Push();
-   heap_handle **Entry = Stack_Allocate(sizeof(heap_handle*));
-   *Entry = AST;
-   
-   while(Stack_GetCursor() > StackStart) {
-      heap_handle *Node = *(heap_handle**)Stack_GetEntry();
-      Stack_Pop();
+   while((u64)Cursor > (u64)StackStart) {
+      ast_node *Node = *(--Cursor);
       
-      switch(((ast_node*)Node->Data)->Type) {
+      switch(Node->Type) {
          case ASTType_Invalid:
             Assert(FALSE, "Generation error: Invalid AST type!");
             break;
          
          case ASTType_Root: {
-            heap_handle *Children = ((ast_root*)Node->Data)->Children;
+            ast_node *Child = Node->FirstChild->Prev;
             
-            for(s32 I = (Children->Size/sizeof(heap_handle*))-1; I >= 0; I--) {
-               heap_handle *Child = ((heap_handle**)Children->Data)[I];
-               Stack_Push();
-               Entry = Stack_Allocate(sizeof(heap_handle*));
-               *Entry = Child;
+            for(u32 I = 0; I < Node->ChildCount; I++) {
+               *Cursor++ = Child;
+               Child = Child->Prev;
             }
          } break;
          
-         case ASTType_Section:
-            Assert(FALSE, "Sections not implemented!");
-            break;
+         case ASTType_Section: {
+            ast_section *Section = (vptr)Node;
+            
+            if(String_Cmp(Node->Token->Str, CLStringL("text")) == EQUAL) {
+               ast_node *Child = Node->FirstChild->Prev;
+               
+               for(u32 I = 0; I < Node->ChildCount; I++) {
+                  *Cursor++ = Child;
+                  Child = Child->Prev;
+               }
+            } else {
+               Assert(FALSE, "Unrecognized section!");
+            }
+         } break;
+         
+         case ASTType_Statement: {
+            ast_node *Child = Node->FirstChild->Prev;
+            
+            for(u32 I = 0; I < Node->ChildCount; I++) {
+               *Cursor++ = Child;
+               Child = Child->Prev;
+            }
+         } break;
          
          case ASTType_Instruction: {
-            heap_handle *Children = ((ast_instruction*)Node->Data)->Children;
-            instruction Inst = ((ast_instruction*)Node->Data)->Instruction;
+            ast_instruction *Inst = (vptr)Node;
             
-            Assert(FileInc >= Inst.Size+1);
-            if(FileSize+Inst.Size+1 > Output->Size)
+            Assert(FileInc >= Inst->Instruction.Size+1);
+            if(FileSize+Inst->Instruction.Size+1 > Output->Size)
                Heap_Resize(Output, FileSize+FileInc);
             
-            switch(Inst.Fmt) {
-               case FMT_B1R0:
-                  GenerateInstruction_B1R0(LabelMap, Yielded, Node, Inst, Children, &FileSize, Output);
-                  break;
-               
-               case FMT_B1R0e:
-                  GenerateInstruction_B1R0e(LabelMap, Yielded, Node, Inst, Children, &FileSize, Output);
-                  break;
-               
-               case FMT_B1R1:
-                  GenerateInstruction_B1R1(LabelMap, Yielded, Node, Inst, Children, &FileSize, Output);
-                  break;
-               
-               case FMT_B2R0:
-                  GenerateInstruction_B2R0(LabelMap, Yielded, Node, Inst, Children, &FileSize, Output);
-                  break;
-               
-               case FMT_B2R0e:
-                  GenerateInstruction_B2R0e(LabelMap, Yielded, Node, Inst, Children, &FileSize, Output);
-                  break;
-               
-               case FMT_B2R1:
-                  GenerateInstruction_B2R1(LabelMap, Yielded, Node, Inst, Children, &FileSize, Output);
-                  break;
-               
-               case FMT_B2R1f:
-                  GenerateInstruction_B2R1f(LabelMap, Yielded, Node, Inst, Children, &FileSize, Output);
-                  break;
-               
-               case FMT_B2R2:
-                  GenerateInstruction_B2R2(LabelMap, Yielded, Node, Inst, Children, &FileSize, Output);
-                  break;
+            switch(Inst->Instruction.Fmt) {
+               case FMT_B1R0:  GenerateInstruction_B1R0 (LabelMap, Yielded, Inst, &FileSize, Output); break;
+               case FMT_B1R0e: GenerateInstruction_B1R0e(LabelMap, Yielded, Inst, &FileSize, Output); break;
+               case FMT_B1R1:  GenerateInstruction_B1R1 (                   Inst, &FileSize, Output); break;
+               case FMT_B2R0:  GenerateInstruction_B2R0 (LabelMap, Yielded, Inst, &FileSize, Output); break;
+               case FMT_B2R0e: GenerateInstruction_B2R0e(LabelMap, Yielded, Inst, &FileSize, Output); break;
+               case FMT_B2R1f: GenerateInstruction_B2R1f(                   Inst, &FileSize, Output); break;
+               case FMT_B2R2:  GenerateInstruction_B2R2 (                   Inst, &FileSize, Output); break;
                
                default: Assert(FALSE, "Unknown instruction format!");
             }
@@ -293,61 +299,43 @@ GenerateASM(heap_handle *AST, hashmap *LabelMap)
             Assert(FALSE, "Immediate not attatched to an instruction!");
             break;
          
-         case ASTType_LabelReference:
-            Assert(FALSE, "Label reference not attatched to an instruction!");
-            break;
-         
          case ASTType_Label: {
-            string Name = ((ast_label*)Node->Data)->Name;
-            
-            HashMap_Add(LabelMap, &Name, &FileSize);
+            HashMap_Add(LabelMap, &Node->Token->Str, &FileSize);
          } break;
          
          default: Assert(FALSE, "Unknown AST type!");
       }
    }
    
-   u64 Cursor = 0;
-   while(Cursor < Yielded->Size) {
-      heap_handle *Node = *(heap_handle**)((u08*)Yielded->Data + Cursor);
-      Cursor += sizeof(heap_handle*);
-      ast_node_type NodeType = ((ast_node*)Node->Data)->Type;
+   u64 YieldedCursor = 0;
+   while(YieldedCursor < Yielded->Size) {
+      ast_node *Node = *(ast_node**)((u08*)Yielded->Data + YieldedCursor);
+      u64 OldSize = Yielded->Size;
+      YieldedCursor += sizeof(ast_node*);
       
-      switch(NodeType) {
+      switch(Node->Type) {
          case ASTType_Instruction: {
-            heap_handle *Children = ((ast_instruction*)Node->Data)->Children;
-            instruction Inst = ((ast_instruction*)Node->Data)->Instruction;
-            u64 PC = *(u16*)((u08*)Yielded->Data + Cursor);
-            Cursor += sizeof(u16);
+            ast_instruction *Inst = (vptr)Node;
+            instruction InstData = Inst->Instruction;
             
-            switch(Inst.Fmt) {
-               case FMT_B1R0:
-                  GenerateInstruction_B1R0(LabelMap, Yielded, Node, Inst, Children, &PC, Output);
-                  break;
+            u64 FileLoc = *(u64*)((u08*)Yielded->Data + YieldedCursor);
+            YieldedCursor += sizeof(u64);
+            
+            switch(InstData.Fmt) {
+               case FMT_B1R0:  GenerateInstruction_B1R0 (LabelMap, Yielded, Inst, &FileLoc, Output); break;
+               case FMT_B1R0e: GenerateInstruction_B1R0e(LabelMap, Yielded, Inst, &FileLoc, Output); break;
+               case FMT_B2R0:  GenerateInstruction_B2R0 (LabelMap, Yielded, Inst, &FileLoc, Output); break;
+               case FMT_B2R0e: GenerateInstruction_B2R0e(LabelMap, Yielded, Inst, &FileLoc, Output); break;
                
-               case FMT_B2R0:
-                  GenerateInstruction_B1R0(LabelMap, Yielded, Node, Inst, Children, &PC, Output);
-                  break;
-                  
-               case FMT_B2R1:
-                  GenerateInstruction_B1R0(LabelMap, Yielded, Node, Inst, Children, &PC, Output);
-                  break;
-                  
-               case FMT_B1R0e:
-                  GenerateInstruction_B1R0(LabelMap, Yielded, Node, Inst, Children, &PC, Output);
-                  break;
-                  
-               case FMT_B2R0e:
-                  GenerateInstruction_B1R0(LabelMap, Yielded, Node, Inst, Children, &PC, Output);
-                  break;
-               
-               default:
-                  Assert(FALSE, "Non-yieldable instruction format!");
+               default: Assert(FALSE, "Yielded on a non-yieldable instruction format!");
             }
          } break;
          
-         default:
-            Assert(FALSE, "Unknown or unsupported yield type!");
+         default: Assert(FALSE, "Unknown or unsupported yield type!");
+      }
+      
+      if(Yielded->Size != OldSize) {
+         Assembler_Log(NULL, Node->Token, LogType_Syntax|LogLevel_Fatal, CFStringL("Label operand for '%s' not found.", Node->Token->Str));
       }
    }
    
