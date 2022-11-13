@@ -3,13 +3,13 @@
    lui   C00`16
    lac   a0
    setsp a0
-   
    saci  0
-   addi  C`16   # Add in the lower part of the address
-   lac   a0     # Load address of input into a0
-   jal   22`16  # Run relPrime
-   lm    a0, a0 # Load the value at address a0 into a0, or load the input
-   jal   3C`16  # After running the program, jump over it
+   addi  C`16     # Add in the lower part of the address
+   lac   a0       # Load address of input into a0
+   lm    a0, a0   # Load the value at address a0 into a0, or load the input
+   jal   relPrime # Run relPrime
+   addi  0
+   jal   End      # After running the program, jump over it
 
 gcd: # 14
    sac   a0
@@ -27,13 +27,13 @@ gcd_Loop: # 21
    bez   gcd_DecB # 34 - 26 = 8
    sac   a0
    sub   a1
-   jal   gcd_Loop # 21 - 30 = -9
+   bnez  gcd_Loop # 21 - 30 = -9
    swp   a0, zro
 
 gcd_DecB: # 34
    sac   a1
    sub   a0
-   jal   gcd_Loop # 21 - 36 = -15
+   bnez  gcd_Loop # 21 - 36 = -15
    swp   a1, zro
 
 gcd_End: # 40
@@ -45,7 +45,7 @@ relPrime: # 42
    push  s0
    push  s1
    saci  2
-   swp   a1, s0
+   swp   s1, a0
    lac   s0
 
 relPrime_Loop: # 52
@@ -65,11 +65,13 @@ relPrime_End: # 66
    pop   s1
    pop   s0
    pop   ra
+   addi  0
+   addi  0
    jalr  ra
    lac   a0
 
 End: # 74
    saci  0
-   addi  E`16
+   addi -2
    lac   s0
    sm    s0, a0
