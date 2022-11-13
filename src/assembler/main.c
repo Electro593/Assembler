@@ -344,7 +344,32 @@ Assembler_Load(platform_state *Platform, assembler_module *Module)
    heap_handle *Output = GenerateASM((ast_node*)Parser.AST, &LabelMap);
    
    Platform_OpenFile(&File, ObjFileName.Text, FILE_WRITE);
-   Platform_WriteFile(File, Output->Data, Output->Size, 0);
+   
+   #if 0
+      Platform_WriteFile(File, Output->Data, Output->Size, 0);
+   #else
+      c08 Chars[] = "0123456789ABCDEF";
+      heap_handle *FormattedOutput = Heap_Allocate(_Heap, Output->Size*2 + (Output->Size-1)/2);
+      
+      for(u32 I = 0, J = 0; I < Output->Size; I += 2, J += 5) {
+         if(I+1 < Output->Size) {
+            ((c08*)FormattedOutput->Data)[J+0] = Chars[((u08*)Output->Data)[I+1] >> 4];
+            ((c08*)FormattedOutput->Data)[J+1] = Chars[((u08*)Output->Data)[I+1] & 15];
+            ((c08*)FormattedOutput->Data)[J+2] = Chars[((u08*)Output->Data)[I+0] >> 4];
+            ((c08*)FormattedOutput->Data)[J+3] = Chars[((u08*)Output->Data)[I+0] & 15];
+         } else {
+            ((c08*)FormattedOutput->Data)[J+0] = Chars[((u08*)Output->Data)[I+0] >> 4];
+            ((c08*)FormattedOutput->Data)[J+1] = Chars[((u08*)Output->Data)[I+0] & 15];
+         }
+         
+         if(I+2 < Output->Size) {
+            ((c08*)FormattedOutput->Data)[J+4] = ' ';
+         }
+      }
+      
+      Platform_WriteFile(File, FormattedOutput->Data, FormattedOutput->Size, 0);
+   #endif
+   
    Platform_CloseFile(File);
    #else
 
